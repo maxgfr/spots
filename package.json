@@ -1,0 +1,41 @@
+{
+  "name": "spots",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pin places on a map and keep them in your browser. No account, no server, no API key.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "bun scripts/dev.ts",
+    "build": "bun scripts/build.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "bun test src scripts",
+    "test:e2e": "bun run build && playwright test"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "4.0.87",
+    "@ai-sdk/google": "4.0.104",
+    "@ai-sdk/mistral": "4.0.71",
+    "@ai-sdk/openai": "4.0.101",
+    "@ai-sdk/openai-compatible": "3.0.77",
+    "@fontsource/barlow-condensed": "5.3.0",
+    "@fontsource/figtree": "5.3.0",
+    "@preact/signals": "2.11.3",
+    "ai": "7.0.152",
+    "fflate": "0.8.3",
+    "llm-connect": "2.5.0",
+    "llm-models": "1.14.0",
+    "lucide": "1.63.0",
+    "maplibre-gl": "6.16.0",
+    "preact": "10.29.8",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@playwright/test": "1.64.1",
+    "@types/bun": "1.4.4",
+    "typescript": "7.0.2"
+  }
+}
