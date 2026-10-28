@@ -1,32 +1,5 @@
-import { expect, type Page, test } from "@playwright/test";
-
-/** Photon and Nominatim are answered locally so the tests do not depend on them. */
-async function fakeGeocoder(page: Page) {
-  await page.route("https://photon.komoot.io/**", (route) => {
-    const url = new URL(route.request().url());
-    const lng = Number(url.searchParams.get("lon") ?? 2.3705);
-    const lat = Number(url.searchParams.get("lat") ?? 48.8738);
-    const feature = {
-      type: "Feature",
-      geometry: {
-        type: "Point",
-        coordinates: url.pathname.includes("reverse") ? [lng, lat] : [2.3705, 48.8738],
-      },
-      properties: {
-        osm_type: "N",
-        osm_id: 1,
-        osm_key: "amenity",
-        osm_value: "restaurant",
-        name: "Le Petit Cambodge",
-        housenumber: "20",
-        street: "Rue Alibert",
-        postcode: "75010",
-        city: "Paris",
-      },
-    };
-    return route.fulfill({ json: { type: "FeatureCollection", features: [feature] } });
-  });
-}
+import { expect, test } from "@playwright/test";
+import { fakeGeocoder } from "./helpers";
 
 test.beforeEach(async ({ page }) => {
   await fakeGeocoder(page);

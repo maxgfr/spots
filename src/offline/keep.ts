@@ -1,12 +1,14 @@
 /**
- * "Keep this area offline": the tiles of the visible area, from its zoom down
- * to street level, handed to the service worker, which stores them in a cache
- * it never trims. Capped, because each zoom level is four times the last.
+ * "Keep this area offline": the tiles of the visible area, from just above its
+ * zoom down to the source's last level (14 for OpenFreeMap; closer zooms reuse
+ * those tiles), handed to the service worker, which stores them in a cache it
+ * never trims. Capped, because each zoom level is four times the last.
  */
 import type { Map as MLMap } from "maplibre-gl";
 
 export const MAX_TILES = 2500;
-const MAX_ZOOM = 15;
+/** OpenFreeMap's last tile level, when the source does not say. */
+const SOURCE_MAX_ZOOM = 14;
 
 function lng2x(lng: number, z: number): number {
   return Math.floor(((lng + 180) / 360) * 2 ** z);
@@ -22,16 +24,23 @@ export interface Area {
   south: number;
   east: number;
   north: number;
-  minZoom: number;
+  /** The map's zoom when the area was taken. */
+  zoom: number;
+  /** The source's last tile level. */
+  maxZoom: number;
 }
 
-/** The tile coordinates covering an area, from minZoom to street level, at most `cap` of them. */
+/**
+ * The tile coordinates covering an area, from one level above its zoom down to the source's last
+ * level, or null past `cap` tiles. A map zoomed in past the last level still needs that level.
+ */
 export function tilesFor(
   area: Area,
   cap = MAX_TILES,
 ): { z: number; x: number; y: number }[] | null {
   const out: { z: number; x: number; y: number }[] = [];
-  for (let z = Math.max(0, Math.floor(area.minZoom)); z <= MAX_ZOOM; z++) {
+  const top = Math.min(area.maxZoom, Math.max(0, Math.floor(area.zoom) - 1));
+  for (let z = top; z <= area.maxZoom; z++) {
     const x0 = lng2x(area.west, z);
     const x1 = lng2x(area.east, z);
     const y0 = lat2y(area.north, z);
@@ -58,12 +67,14 @@ async function template(map: MLMap): Promise<string | null> {
 
 export function areaOf(map: MLMap): Area {
   const b = map.getBounds();
+  const src = map.getSource("openmaptiles") as { maxzoom?: number } | undefined;
   return {
     west: b.getWest(),
     south: b.getSouth(),
     east: b.getEast(),
     north: b.getNorth(),
-    minZoom: map.getZoom(),
+    zoom: map.getZoom(),
+    maxZoom: Math.min(src?.maxzoom ?? SOURCE_MAX_ZOOM, 16),
   };
 }
 
@@ -78,6 +89,7 @@ export async function keepArea(
 ): Promise<KeepResult> {
   const tiles = tilesFor(areaOf(map));
   if (!tiles) return { ok: false, reason: "too-big" };
+  if (tiles.length === 0) return { ok: false, reason: "no-source" };
   const tpl = await template(map);
   if (!tpl) return { ok: false, reason: "no-source" };
   const worker = navigator.serviceWorker?.controller;
