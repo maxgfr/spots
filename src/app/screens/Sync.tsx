@@ -5,7 +5,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { l, locale, tr } from "../../i18n";
 import { GistError, gistUrl, TOKEN_URL } from "../../sync/gist";
-import { connect, disconnect, link, syncNow, syncStatus } from "../../sync/sync";
+import { connect, disconnect, link, linkKept, syncNow, syncStatus } from "../../sync/sync";
 import { Icon } from "../../ui/icons";
 import { ScreenHead, toast } from "../../ui/ui";
 import { requestSnap } from "../Sheet";
@@ -86,6 +86,16 @@ export function Sync() {
             {syncLabel()}
           </p>
         </div>
+        {linkKept.value ? null : (
+          <p class="error" role="alert" style={{ margin: 0 }}>
+            {tr(
+              l(
+                "This browser's storage for the site is full or blocked: the connection lasts for this page only, connect again after a reload.",
+                "Le stockage du navigateur pour ce site est plein ou bloqué : la connexion ne dure que pour cette page, reconnecte-toi après un rechargement.",
+              ),
+            )}
+          </p>
+        )}
         <p class="muted small" style={{ margin: 0 }}>
           {tr(
             l(

@@ -5,9 +5,10 @@
  * when the network returns, and two seconds after a change.
  */
 import { effect, signal } from "@preact/signals";
+import { secureStorage } from "llm-connect";
 import { merge, normalizeDoc, purgeTombstones, sameDoc } from "../store/merge";
 import type { Doc } from "../store/model";
-import { doc, replaceDoc } from "../store/store";
+import { doc, notebookLoaded, replaceDoc } from "../store/store";
 import {
   createGist,
   findGist,
@@ -18,7 +19,8 @@ import {
   writeGist,
 } from "./gist";
 
-const KEY = "spots:github";
+/** Where the link used to be kept, the token in clear text: moved into `vault`, then removed. */
+const LEGACY_KEY = "spots:github";
 
 export interface Link {
   token: string;
@@ -26,9 +28,18 @@ export interface Link {
   gistId: string;
 }
 
-function readLink(): Link | null {
+/**
+ * The token encrypted at rest (AES-GCM under a non-extractable key in IndexedDB), the
+ * login and gist id beside it: every page of maxgfr.github.io can read this origin's storage.
+ */
+const vault = secureStorage<{ login: string; gistId: string }>({
+  prefsKey: "spots:github-link",
+  dbName: "spots-github",
+});
+
+function readLegacy(): Link | null {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? "null");
+    const raw = JSON.parse(localStorage.getItem(LEGACY_KEY) ?? "null");
     if (raw && typeof raw.token === "string" && typeof raw.gistId === "string") {
       return { token: raw.token, login: String(raw.login ?? ""), gistId: raw.gistId };
     }
@@ -36,7 +47,36 @@ function readLink(): Link | null {
   return null;
 }
 
-export const link = signal<Link | null>(typeof window === "undefined" ? null : readLink());
+function removeLegacy(): void {
+  try {
+    localStorage.removeItem(LEGACY_KEY);
+  } catch {}
+}
+
+/** Stores the link; false when the browser kept it for this page only (storage full or blocked). */
+async function keep(l: Link): Promise<boolean> {
+  const kept = await vault
+    .save({ apiKey: l.token, model: "", login: l.login, gistId: l.gistId }, { rememberKey: true })
+    .catch(() => false);
+  return kept !== false;
+}
+
+async function loadLink(): Promise<Link | null> {
+  const old = readLegacy();
+  if (old) {
+    // Removed only once the encrypted copy is stored: a full storage must not lose the link.
+    if (await keep(old)) removeLegacy();
+    return old;
+  }
+  const saved = await vault.loadDraft?.().catch(() => null);
+  return saved?.apiKey && saved.gistId
+    ? { token: saved.apiKey, login: String(saved.login ?? ""), gistId: saved.gistId }
+    : null;
+}
+
+export const link = signal<Link | null>(null);
+/** False when the last link could not be stored: it lasts until the page is closed. */
+export const linkKept = signal(true);
 
 export type SyncStatus =
   | { state: "off" }
@@ -44,9 +84,7 @@ export type SyncStatus =
   | { state: "syncing" }
   | { state: "error"; code: GistErrorCode; at: number };
 
-export const syncStatus = signal<SyncStatus>(
-  link.value ? { state: "idle", at: 0 } : { state: "off" },
-);
+export const syncStatus = signal<SyncStatus>({ state: "off" });
 
 function serialize(d: Doc): string {
   return `${JSON.stringify({ app: "spots", version: 1, doc: d })}\n`;
@@ -111,15 +149,17 @@ export async function connect(token: string): Promise<void> {
   let gistId = await findGist(t);
   if (!gistId) gistId = await createGist(t, serialize(doc.value));
   const next = { token: t, login, gistId };
-  localStorage.setItem(KEY, JSON.stringify(next));
+  linkKept.value = await keep(next);
   link.value = next;
   await syncNow();
 }
 
 /** Forgets the token on this device. The gist stays on GitHub. */
 export function disconnect(): void {
-  localStorage.removeItem(KEY);
+  removeLegacy();
+  void vault.clear().catch(() => {});
   link.value = null;
+  linkKept.value = true;
   syncStatus.value = { state: "off" };
 }
 
@@ -127,6 +167,12 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 
 /** Starts the background sync triggers. */
 export function startSync(): void {
+  // The stored link, once the notebook it syncs is loaded: setting it runs the first sync below.
+  void notebookLoaded.then(loadLink).then((saved) => {
+    if (!saved || link.value) return;
+    syncStatus.value = { state: "idle", at: 0 };
+    link.value = saved;
+  });
   let first = true;
   effect(() => {
     doc.value; // re-run on every change

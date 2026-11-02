@@ -24,7 +24,7 @@ A personal map notebook of places, in the spirit of Mapstr, that lives entirely 
 
 ## Positioning
 
-No account, no server, no API key needed. Data stays in the browser (localStorage) and can be synced across devices through the user's own private GitHub Gist. Lists are shared through a link that carries the list itself. AI is optional and uses the user's own provider and key (llm-connect).
+No account, no server, no API key needed. Data stays in the browser (IndexedDB) and can be synced across devices through the user's own private GitHub Gist. Lists are shared through a link that carries the list itself. AI is optional and uses the user's own provider and key (llm-connect).
 
 ## Operating Context
 
@@ -39,7 +39,7 @@ No account, no server, no API key needed. Data stays in the browser (localStorag
 - Tags (name, color, icon) and lists (name, description); filtering on map and list.
 - Geocoding with Photon (komoot), and Nominatim for reverse lookups, both keyless and rate-limited by fair use.
 - Map: MapLibre GL, OpenFreeMap tiles (no key), light and dark styles.
-- Sync: private Gist through a fine-grained token with only the Gists permission; the token stays on the device; merge by id and update time with deletion tombstones.
+- Sync: private Gist through a fine-grained token with only the Gists permission; the token stays on the device, encrypted at rest; merge by id and update time with deletion tombstones.
 - Sharing: a list encoded and compressed into the URL fragment, never sent to a server.
 - Import: Google Takeout Saved Places (GeoJSON) and saved lists (CSV, geocoded by name), JSON backup round trip.
 - Offline: precached app shell, runtime tile cache, and "keep this area offline".

@@ -1,8 +1,14 @@
 /**
- * The notebook in memory and in localStorage. `doc` is the one source of truth
+ * The notebook in memory and in IndexedDB. `doc` is the one source of truth
  * for the interface; every change goes through the functions here, which stamp
  * `updatedAt`, so that a sync can merge two copies record by record. Another
- * tab writing the notebook is merged in through the `storage` event.
+ * tab writing the notebook is merged in through a BroadcastChannel.
+ *
+ * Every page of maxgfr.github.io shares this origin's storage, and its one
+ * localStorage (a few MB for all of them) fills up: the notebook, which grows,
+ * lives in IndexedDB. It used to live in localStorage under `spots:v1`; that
+ * copy is merged in and removed once IndexedDB holds it, and is the fallback
+ * when IndexedDB refuses a write.
  */
 import { computed, effect, signal } from "@preact/signals";
 import { l, tr } from "../i18n";
@@ -18,7 +24,11 @@ import {
   type TagColor,
 } from "./model";
 
+/** Where the notebook lived before IndexedDB: now merged in, then removed, and a fallback. */
 const KEY = "spots:v1";
+const DB_NAME = "spots";
+const STORE = "notebook";
+const ID = "doc";
 
 /**
  * The tags a new notebook starts with. Fixed ids and a zero timestamp, so two
@@ -57,33 +67,108 @@ function read(): Doc | null {
   }
 }
 
-/** Whether the notebook was found in storage at startup (false on a first visit). */
-export const hadNotebook = typeof window !== "undefined" && read() !== null;
+const legacy = typeof window === "undefined" ? null : read();
 
 export const doc = signal<Doc>(
-  typeof window === "undefined" ? emptyDoc() : (read() ?? starterDoc()),
+  typeof window === "undefined" ? emptyDoc() : (legacy ?? starterDoc()),
 );
 
-/** Set when localStorage refused a write (full, or disabled). */
+/** Set when the browser refused to keep the notebook (storage full, or disabled). */
 export const storageError = signal<string | null>(null);
 
+let opening: Promise<IDBDatabase> | null = null;
+function database(): Promise<IDBDatabase> {
+  opening ??= new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(STORE);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+    // An open that never settles (another tab holding the database) must not hold the notebook.
+    setTimeout(() => reject(new Error("The local database is busy.")), 3000);
+  });
+  opening.catch(() => {
+    opening = null;
+  });
+  return opening;
+}
+
+async function idb<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRequest<T>) {
+  const d = await database();
+  return new Promise<T>((resolve, reject) => {
+    const tx = d.transaction(STORE, mode);
+    const request = run(tx.objectStore(STORE));
+    tx.oncomplete = () => resolve(request.result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+const channel =
+  typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("spots-notebook");
+let inLocalStorage = legacy !== null;
 let lastWritten = "";
-if (typeof window !== "undefined") {
-  effect(() => {
-    const json = JSON.stringify(doc.value);
-    if (json === lastWritten) return;
-    lastWritten = json;
+let loaded = false;
+/** The latest notebook not yet stored: a page closing loses a write still in flight. */
+let pending: string | null = null;
+
+async function persist(d: Doc): Promise<void> {
+  const json = JSON.stringify(d);
+  if (json === lastWritten) return;
+  lastWritten = json;
+  pending = json;
+  try {
+    await idb("readwrite", (s) => s.put(json, ID));
+    if (pending === json) pending = null;
+    storageError.value = null;
+    if (inLocalStorage) {
+      inLocalStorage = false;
+      try {
+        localStorage.removeItem(KEY);
+      } catch {}
+    }
+  } catch (err) {
     try {
       localStorage.setItem(KEY, json);
+      if (pending === json) pending = null;
+      inLocalStorage = true;
       storageError.value = null;
-    } catch (err) {
+    } catch {
       storageError.value = err instanceof Error ? err.message : String(err);
     }
+  }
+  channel?.postMessage(json);
+}
+
+/** Resolves once the stored notebook is in `doc` (merged with any edit made meanwhile). */
+export const notebookLoaded: Promise<void> =
+  typeof window === "undefined"
+    ? Promise.resolve()
+    : (async () => {
+        try {
+          const raw = await idb("readonly", (s) => s.get(ID));
+          const stored = typeof raw === "string" ? normalizeDoc(JSON.parse(raw)) : null;
+          if (stored) doc.value = merge(doc.value, stored);
+        } catch {}
+        loaded = true;
+        await persist(doc.value);
+      })();
+
+if (typeof window !== "undefined") {
+  effect(() => {
+    const d = doc.value;
+    if (loaded) void persist(d);
   });
-  window.addEventListener("storage", (e) => {
-    if (e.key !== KEY || !e.newValue) return;
+  // Leaving with a write in flight: keep it where a synchronous write can, merged in next time.
+  window.addEventListener("pagehide", () => {
+    if (!pending) return;
     try {
-      const other = normalizeDoc(JSON.parse(e.newValue));
+      localStorage.setItem(KEY, pending);
+      inLocalStorage = true;
+    } catch {}
+  });
+  channel?.addEventListener("message", (e: MessageEvent<string>) => {
+    try {
+      const other = normalizeDoc(JSON.parse(e.data));
       if (other) doc.value = merge(doc.value, other);
     } catch {}
   });

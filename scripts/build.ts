@@ -181,8 +181,9 @@ self.addEventListener("fetch", (e) => {
     return;
   }
   if (url.origin !== location.origin) return;
+  // Only spots' own cache: every page of maxgfr.github.io shares this origin's Cache Storage.
   e.respondWith(
-    caches.match(e.request, { ignoreSearch: true }).then((hit) => hit || fetch(e.request)),
+    caches.match(e.request, { cacheName: CACHE, ignoreSearch: true }).then((hit) => hit || fetch(e.request)),
   );
 });
 // "Keep this area offline": the page sends tile URLs, the worker stores them and reports progress.
