@@ -31,7 +31,7 @@ No account, no server, no API key.
 
 ## What leaves your device
 
-Your notebook lives in `localStorage`. The page talks to:
+Your notebook lives in this browser, in IndexedDB. The page talks to:
 
 | Where                         | What for                                                                                  | When                        |
 | ----------------------------- | ----------------------------------------------------------------------------------------- | --------------------------- |
@@ -42,8 +42,9 @@ Your notebook lives in `localStorage`. The page talks to:
 | Your AI provider              | What you ask the AI to read                                                               | Only if you set up the AI   |
 
 A strict Content-Security-Policy keeps every script, style and font to the site itself; there is
-no analytics and no tracking. The GitHub token stays in this browser; the AI key is encrypted at
-rest under a non-extractable WebCrypto key (llm-connect's `secureStorage`).
+no analytics and no tracking. The GitHub token and the AI key stay in this browser, encrypted at
+rest under a non-extractable WebCrypto key (llm-connect's `secureStorage`): every project page of
+maxgfr.github.io shares the same browser storage.
 
 ## Sync with GitHub
 

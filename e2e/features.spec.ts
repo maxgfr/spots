@@ -90,6 +90,82 @@ test("two browsers sync through the same gist, deletions included", async ({ pag
   await other.close();
 });
 
+test("an older version's notebook and GitHub link move out of localStorage, the token encrypted", async ({
+  page,
+  browser,
+}) => {
+  const github = fakeGitHub();
+  await github.attach(page);
+  await page.goto("./");
+  await pinBySearch(page, "petit cambodge", /Le Petit Cambodge/);
+  await connect(page, "good-token");
+  await expect.poll(() => github.gists.size).toBe(1);
+  const gistId = [...github.gists.keys()][0] ?? "";
+  // What an older version kept, both in localStorage, the token in clear text.
+  const notebook = await page.evaluate(
+    () =>
+      new Promise<string>((resolve, reject) => {
+        const open = indexedDB.open("spots");
+        open.onsuccess = () => {
+          const get = open.result.transaction("notebook").objectStore("notebook").get("doc");
+          get.onsuccess = () => resolve(get.result as string);
+          get.onerror = () => reject(get.error);
+        };
+      }),
+  );
+
+  const other = await browser.newContext();
+  const old = await other.newPage();
+  await fakeGeocoder(old);
+  await english(old);
+  await github.attach(old);
+  await old.addInitScript(
+    ({ notebook, gistId }) => {
+      if (sessionStorage.getItem("seeded")) return;
+      sessionStorage.setItem("seeded", "1");
+      localStorage.setItem("spots:v1", notebook);
+      localStorage.setItem(
+        "spots:github",
+        JSON.stringify({ token: "good-token", login: "tester", gistId }),
+      );
+    },
+    { notebook, gistId },
+  );
+  await old.goto("./");
+  await expect(old.locator(".place-row")).toHaveCount(1);
+  const leftovers = () =>
+    old.evaluate(() => ({
+      notebook: localStorage.getItem("spots:v1"),
+      link: localStorage.getItem("spots:github"),
+      clear: Object.keys(localStorage).filter((k) =>
+        localStorage.getItem(k)?.includes("good-token"),
+      ),
+    }));
+  await expect.poll(leftovers).toEqual({ notebook: null, link: null, clear: [] });
+  await old.reload();
+  await expect(old.locator(".place-row")).toHaveCount(1);
+  await old.goto("./#/sync");
+  await expect(old.getByText("@tester")).toBeVisible();
+  await other.close();
+});
+
+test("a full storage (every maxgfr.github.io page shares it) says the notebook is not kept", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const full = () => {
+      throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+    };
+    Storage.prototype.setItem = full;
+    IDBObjectStore.prototype.put = full;
+  });
+  await page.goto("./");
+  await pinBySearch(page, "petit cambodge", /Le Petit Cambodge/);
+  await expect(page.getByRole("heading", { level: 1, name: "Le Petit Cambodge" })).toBeVisible();
+  await page.goto("./#/menu");
+  await expect(page.getByRole("alert")).toContainText("refused to save your notebook");
+});
+
 test("a refused token says so and changes nothing", async ({ page }) => {
   const github = fakeGitHub();
   await github.attach(page);

@@ -51,7 +51,17 @@ export function AiSettings() {
     e.preventDefault();
     setError(null);
     const res = await llm.save();
-    if (res.ok) {
+    if (res.ok && !res.persisted) {
+      // The AI works for this page, but a full or blocked storage will not keep it.
+      setError(
+        tr(
+          l(
+            "This browser's storage for the site is full or blocked: the AI is ready for this page only, set it up again after a reload.",
+            "Le stockage du navigateur pour ce site est plein ou bloqué : l'IA n'est prête que pour cette page, règle-la à nouveau après un rechargement.",
+          ),
+        ),
+      );
+    } else if (res.ok) {
       toast(tr(l("AI ready", "IA prête")));
       back({ name: "ai" });
     } else {
