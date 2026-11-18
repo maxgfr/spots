@@ -1093,6 +1093,53 @@ button.chip[aria-pressed="true"] {
   margin: 2px;
 }
 
+/* Stars, in ink like the text: colour belongs to tags. A half star fills its left half. */
+.stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.star {
+  position: relative;
+  display: inline-flex;
+  color: var(--ink-3);
+}
+
+.star-full {
+  color: var(--ink);
+}
+
+.star-full .icon,
+.star-half .icon + .icon {
+  fill: currentColor;
+}
+
+.star-half .icon + .icon {
+  position: absolute;
+  inset: 0;
+  color: var(--ink);
+}
+
+.rating {
+  display: flex;
+  gap: 2px;
+}
+
+.rating button {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+}
+
+.rating button:hover {
+  background: var(--paper-2);
+}
+
 .title-row {
   display: flex;
   align-items: flex-start;

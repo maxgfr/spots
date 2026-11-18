@@ -163,7 +163,7 @@ function FirstVisit() {
         </button>
         <button type="button" class="btn block" onClick={() => go({ name: "import" })}>
           <Icon name="upload" size={18} />
-          {tr(l("Import from Google Maps", "Importer depuis Google Maps"))}
+          {tr(l("Import from Google Maps or Mapstr", "Importer depuis Google Maps ou Mapstr"))}
         </button>
         <button type="button" class="btn block" onClick={() => go({ name: "ai" })}>
           <Icon name="sparkles" size={18} />

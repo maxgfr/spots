@@ -1,15 +1,27 @@
 /**
  * Bringing places in: a Google Takeout export (the zip as downloaded, or its
- * "Saved Places.json" and saved list CSV files) or a spots backup. Google's
- * lists rarely carry coordinates, so those places are found by name, one at a
- * time, and the ones that cannot be found are listed rather than guessed.
+ * "Saved Places.json" and saved list CSV files), a Mapstr export (its CSV and
+ * GeoJSON, joined into one batch with tags, stars and dates) or a spots backup.
+ * Google's lists rarely carry coordinates, so those places are found by name,
+ * one at a time, and the ones that cannot be found are listed rather than guessed.
  */
 import { unzipSync } from "fflate";
 import { useEffect, useState } from "preact/hooks";
 import { search } from "../../geo/geocode";
 import { fmt, l, plural, tr } from "../../i18n";
 import { exportBackup, parseBackup } from "../../import/backup";
+import { parseCsv } from "../../import/csv";
 import {
+  combineMapstr,
+  isMapstrCsvHeader,
+  isMapstrGeojson,
+  type MapstrCsvPlace,
+  type MapstrGeoPlace,
+  parseMapstrCsv,
+  parseMapstrGeojson,
+} from "../../import/mapstr";
+import {
+  type ImportedTag,
   listNameFromFile,
   parseSavedListCsv,
   parseSavedPlaces,
@@ -17,17 +29,20 @@ import {
 } from "../../import/takeout";
 import { fitPlaces } from "../../map/MapView";
 import { distanceMeters, foldName } from "../../share/share";
-import type { Doc, PlaceState } from "../../store/model";
-import { addList, addPlace, doc, lists, mergeIn, places } from "../../store/store";
+import type { Doc, PlaceSource, PlaceState } from "../../store/model";
+import { addList, addPlace, addTag, doc, lists, mergeIn, places, tags } from "../../store/store";
 import { Icon } from "../../ui/icons";
 import { downloadText, ScreenHead, toast } from "../../ui/ui";
 import { requestSnap } from "../Sheet";
 import { go } from "../state";
+import { RepoBackup } from "./RepoBackup";
 
 interface Batch {
   /** The list these places go to, or null for none. */
   list: string | null;
+  /** The state of its places, unless a place has its own. */
   state: PlaceState;
+  source: PlaceSource;
   places: TakeoutPlace[];
 }
 
@@ -43,25 +58,44 @@ function stateForList(name: string): PlaceState {
   return FAVOURITE_LISTS.test(name.trim()) ? "favorite" : "try";
 }
 
+/** The header of a CSV text: its first line, read alone. */
+function csvHeader(text: string): string[] {
+  return parseCsv(text.split(/\r\n|\n|\r/, 1)[0] ?? "")[0] ?? [];
+}
+
 async function readFiles(files: File[]): Promise<Found> {
   const out: Found = { batches: [], backup: null, skipped: [] };
   const entries: { name: string; text: string }[] = [];
   for (const f of files) {
     if (/\.zip$/i.test(f.name)) {
       const zip = unzipSync(new Uint8Array(await f.arrayBuffer()), {
-        filter: (file) => /\.(json|csv)$/i.test(file.name),
+        filter: (file) => /\.(json|geojson|csv)$/i.test(file.name),
       });
       const dec = new TextDecoder();
       for (const [name, data] of Object.entries(zip))
         entries.push({ name, text: dec.decode(data) });
     } else entries.push({ name: f.name, text: await f.text() });
   }
+  // A Mapstr export comes in two files, gathered here and joined once all are read.
+  const mapstrGeo: MapstrGeoPlace[] = [];
+  const mapstrCsv: MapstrCsvPlace[] = [];
+  let mapstrFiles = 0;
   for (const e of entries) {
     if (/\.csv$/i.test(e.name)) {
+      if (isMapstrCsvHeader(csvHeader(e.text))) {
+        mapstrCsv.push(...parseMapstrCsv(e.text));
+        mapstrFiles++;
+        continue;
+      }
       const list = parseSavedListCsv(e.text);
       if (list.length > 0) {
         const name = listNameFromFile(e.name);
-        out.batches.push({ list: name, state: stateForList(name), places: list });
+        out.batches.push({
+          list: name,
+          state: stateForList(name),
+          source: "google",
+          places: list,
+        });
       } else out.skipped.push(e.name);
       continue;
     }
@@ -72,6 +106,11 @@ async function readFiles(files: File[]): Promise<Found> {
       out.skipped.push(e.name);
       continue;
     }
+    if (isMapstrGeojson(json)) {
+      mapstrGeo.push(...parseMapstrGeojson(json));
+      mapstrFiles++;
+      continue;
+    }
     const backup = parseBackup(e.text);
     if (backup && Object.keys(backup.places).length + Object.keys(backup.lists).length > 0) {
       out.backup = backup;
@@ -80,10 +119,29 @@ async function readFiles(files: File[]): Promise<Found> {
     const saved = parseSavedPlaces(json);
     if (saved.length > 0) {
       // Saved Places.json holds the starred places.
-      out.batches.push({ list: null, state: "favorite", places: saved });
+      out.batches.push({ list: null, state: "favorite", source: "google", places: saved });
     } else out.skipped.push(e.name);
   }
+  if (mapstrFiles > 0) {
+    const mapstr = combineMapstr(mapstrGeo, mapstrCsv);
+    // Each place carries its own state; "visited" is only the fallback.
+    if (mapstr.length > 0)
+      out.batches.push({ list: null, state: "visited", source: "mapstr", places: mapstr });
+  }
   return out;
+}
+
+/** The names of the tags an import would create: those no alive tag already has. */
+function newTagNames(batches: Batch[]): string[] {
+  const known = new Set(tags.value.map((t) => foldName(t.name)));
+  const out = new Map<string, string>();
+  for (const b of batches)
+    for (const p of b.places)
+      for (const t of p.tags ?? []) {
+        const key = foldName(t.name);
+        if (!known.has(key) && !out.has(key)) out.set(key, t.name);
+      }
+  return [...out.values()];
 }
 
 export function Import() {
@@ -115,8 +173,8 @@ export function Import() {
         setError(
           tr(
             l(
-              "No places found in these files. Pick the Takeout zip, “Saved Places.json”, the CSV files of your saved lists, or a spots backup.",
-              "Aucun lieu trouvé dans ces fichiers. Choisis le zip Takeout, « Saved Places.json », les fichiers CSV de tes listes enregistrées, ou une sauvegarde spots.",
+              "No places found in these files. Pick the Takeout zip, “Saved Places.json”, the CSV files of your saved lists, the CSV and GeoJSON files of a Mapstr export, or a spots backup.",
+              "Aucun lieu trouvé dans ces fichiers. Choisis le zip Takeout, « Saved Places.json », les fichiers CSV de tes listes enregistrées, les fichiers CSV et GeoJSON d'un export Mapstr, ou une sauvegarde spots.",
             ),
           ),
         );
@@ -141,6 +199,17 @@ export function Import() {
     let existing = 0;
     const missing: string[] = [];
     const listIds = new Map<string, string>();
+    const tagIds = new Map<string, string>();
+    // A tag is made only when a place that carries it is added, and once per name.
+    const tagIdOf = (t: ImportedTag): string => {
+      const key = foldName(t.name);
+      const id =
+        tagIds.get(key) ??
+        tags.value.find((x) => foldName(x.name) === key)?.id ??
+        addTag({ name: t.name, color: t.color, icon: t.icon }).id;
+      tagIds.set(key, id);
+      return id;
+    };
     const addedPlaces = [];
     setProgress({ done, total });
     for (const batch of found.batches) {
@@ -186,11 +255,13 @@ export function Import() {
             lat,
             lng,
             note: t.note,
-            tagIds: [],
+            tagIds: [...new Set((t.tags ?? []).map(tagIdOf))],
             listIds: listId ? [listId] : [],
-            state: batch.state,
+            state: t.state ?? batch.state,
             ...(t.url && /^https?:\/\//.test(t.url) ? { url: t.url } : {}),
-            source: "google",
+            ...(t.rating !== undefined ? { rating: t.rating } : {}),
+            ...(t.createdAt !== undefined ? { createdAt: t.createdAt } : {}),
+            source: batch.source,
           }),
         );
         added++;
@@ -206,6 +277,7 @@ export function Import() {
     ? found.batches.reduce((n, b) => n + b.places.filter((p) => p.lat === undefined).length, 0)
     : 0;
   const count = found ? found.batches.reduce((n, b) => n + b.places.length, 0) : 0;
+  const newTags = found ? newTagNames(found.batches).length : 0;
 
   return (
     <div class="stack">
@@ -230,6 +302,21 @@ export function Import() {
         </ol>
       </div>
 
+      <div class="stack" style={{ gap: "10px" }}>
+        <div class="label">{tr(l("From Mapstr", "Depuis Mapstr"))}</div>
+        <ol class="small muted" style={{ margin: 0, paddingLeft: "20px" }}>
+          <li>{tr(l("In Mapstr, export your map.", "Dans Mapstr, exporte ta carte."))}</li>
+          <li>
+            {tr(
+              l(
+                "Pick both files it gives, the CSV and the GeoJSON, together: the CSV carries your stars and dates, the GeoJSON the positions and tag colours.",
+                "Choisis ensemble les deux fichiers obtenus, le CSV et le GeoJSON : le CSV porte tes étoiles et les dates, le GeoJSON les positions et les couleurs des tags.",
+              ),
+            )}
+          </li>
+        </ol>
+      </div>
+
       <label class="btn shell block" style={{ position: "relative" }}>
         <Icon
           name={reading ? "spinner" : "upload"}
@@ -240,7 +327,7 @@ export function Import() {
         <input
           type="file"
           multiple
-          accept=".zip,.json,.csv,application/zip,application/json,text/csv"
+          accept=".zip,.json,.geojson,.csv,application/zip,application/json,application/geo+json,text/csv"
           class="sr-only"
           onChange={pick}
           disabled={reading || progress !== null}
@@ -270,6 +357,8 @@ export function Import() {
               </strong>
               {found.batches.some((b) => b.list) &&
                 ` · ${found.batches.filter((b) => b.list).length} ${plural(found.batches.filter((b) => b.list).length, l("list", "liste"), l("lists", "listes"))}`}
+              {newTags > 0 &&
+                ` · ${newTags} ${plural(newTags, l("new tag", "nouveau tag"), l("new tags", "nouveaux tags"))}`}
               {pending > 0 &&
                 ` · ${fmt(l("{n} to look up by name (about {s} s)", "{n} à chercher par leur nom (environ {s} s)"), { n: pending, s: Math.ceil(pending * 0.6) })}`}
             </p>
@@ -360,6 +449,7 @@ export function Import() {
           <Icon name="download" size={17} />
           {tr(l("Download a backup", "Télécharger une sauvegarde"))}
         </button>
+        <RepoBackup />
       </div>
     </div>
   );

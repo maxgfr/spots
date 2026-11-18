@@ -4,8 +4,8 @@
  * nothing else). One file, spots.json, in a gist found by its description, so
  * a second device finds the same gist.
  */
+import { call, GitHubError, type GitHubErrorCode, whoami } from "./github";
 
-const API = "https://api.github.com";
 export const GIST_FILE = "spots.json";
 export const GIST_DESCRIPTION = "spots — my places (https://maxgfr.github.io/spots/)";
 
@@ -13,56 +13,11 @@ export const GIST_DESCRIPTION = "spots — my places (https://maxgfr.github.io/s
 export const TOKEN_URL =
   "https://github.com/settings/personal-access-tokens/new?name=spots&description=Sync%20for%20maxgfr.github.io%2Fspots&expires_in=none&gists=write";
 
-export type GistErrorCode =
-  | "auth"
-  | "forbidden"
-  | "not-found"
-  | "rate-limit"
-  | "network"
-  | "server";
-
-export class GistError extends Error {
-  constructor(
-    readonly code: GistErrorCode,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-async function call(token: string, path: string, init: RequestInit = {}): Promise<Response> {
-  let res: Response;
-  try {
-    res = await fetch(`${API}${path}`, {
-      ...init,
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
-        "X-GitHub-Api-Version": "2022-11-28",
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
-      },
-      cache: "no-store",
-    });
-  } catch {
-    throw new GistError("network", "GitHub could not be reached");
-  }
-  if (res.ok) return res;
-  if (res.status === 401) throw new GistError("auth", "GitHub refused the token");
-  if (res.status === 403 || res.status === 429) {
-    const rest = res.headers.get("x-ratelimit-remaining");
-    if (rest === "0" || res.status === 429)
-      throw new GistError("rate-limit", "GitHub rate limit reached");
-    throw new GistError("forbidden", "The token cannot use gists");
-  }
-  if (res.status === 404) throw new GistError("not-found", "Gist not found");
-  throw new GistError("server", `GitHub answered ${res.status}`);
-}
-
-export async function whoami(token: string): Promise<string> {
-  const res = await call(token, "/user");
-  const j = (await res.json()) as { login?: string };
-  return j.login ?? "";
-}
+/** The former names, from when gists were the only backend. */
+export type GistErrorCode = GitHubErrorCode;
+export const GistError = GitHubError;
+export type GistError = GitHubError;
+export { whoami };
 
 interface GistFile {
   content?: string;
@@ -113,9 +68,9 @@ export async function readGist(token: string, id: string): Promise<string | null
   if (!f.raw_url) return null;
   // A file over 1 MB comes truncated in the API answer; the raw URL has it whole.
   const raw = await fetch(f.raw_url, { cache: "no-store" }).catch(() => {
-    throw new GistError("network", "GitHub could not be reached");
+    throw new GitHubError("network", "GitHub could not be reached");
   });
-  if (!raw.ok) throw new GistError("server", `GitHub answered ${raw.status}`);
+  if (!raw.ok) throw new GitHubError("server", `GitHub answered ${raw.status}`);
   return raw.text();
 }
 

@@ -3,10 +3,21 @@
  * current and its older shape) and the CSV files of saved lists ("Want to go.csv"...). Places
  * come out without ids or tags; those whose position is unknown have no lat/lng and need to be
  * geocoded from their name and address.
+ *
+ * TakeoutPlace is also what other importers (Mapstr) produce, with the fields Google lacks.
  */
 
 import { parseMapLink } from "../geo/links";
+import type { PlaceState, TagColor } from "../store/model";
 import { parseCsv } from "./csv";
+
+/** A tag an imported place carries, matched by name or created at import. */
+export interface ImportedTag {
+  name: string;
+  color: TagColor;
+  /** A key of TAG_ICONS. */
+  icon: string;
+}
 
 export interface TakeoutPlace {
   name: string;
@@ -15,22 +26,32 @@ export interface TakeoutPlace {
   lng?: number;
   note: string;
   url?: string;
+  tags?: ImportedTag[];
+  /** Stars, 0.5 to 5 by halves. */
+  rating?: number;
+  /** When the place was saved, in ms since epoch. */
+  createdAt?: number;
+  /** The place's own state, over the batch's. */
+  state?: PlaceState;
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
+export function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function text(value: unknown): string {
+/** A trimmed string, or "" when the value is not one. */
+export function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function num(value: unknown): number | undefined {
+/** A finite number, from a number or a numeric string. */
+export function num(value: unknown): number | undefined {
   const n = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
   return typeof n === "number" && Number.isFinite(n) ? n : undefined;
 }
 
-function coords(lat: unknown, lng: unknown): { lat: number; lng: number } | undefined {
+/** A position when both values are valid coordinates (0, 0 counts as missing). */
+export function coords(lat: unknown, lng: unknown): { lat: number; lng: number } | undefined {
   const la = num(lat);
   const ln = num(lng);
   if (la === undefined || ln === undefined) return undefined;

@@ -10,7 +10,7 @@ import { mapCenter, showPoint } from "../../map/MapView";
 import type { Place, PlaceState } from "../../store/model";
 import { doc, listById, mainTag, tagById, toggleInList, updatePlace } from "../../store/store";
 import { Icon, TagGlyph } from "../../ui/icons";
-import { IconButton, inkStyle, StateToggles, tagInk, toast } from "../../ui/ui";
+import { IconButton, inkStyle, Stars, StateToggles, tagInk, toast } from "../../ui/ui";
 import { requestSnap } from "../Sheet";
 import { back, go, userPosition } from "../state";
 
@@ -19,6 +19,7 @@ const SOURCES: Record<string, ReturnType<typeof l>> = {
   map: l("from the map", "depuis la carte"),
   link: l("from a link", "depuis un lien"),
   google: l("from Google Maps", "depuis Google Maps"),
+  mapstr: l("from Mapstr", "depuis Mapstr"),
   ai: l("by the AI", "par l'IA"),
   share: l("from a shared list", "depuis une liste partagée"),
   import: l("from a backup", "depuis une sauvegarde"),
@@ -142,6 +143,12 @@ export function PlaceView({ id }: { id: string }) {
         <p class="prose" style={{ marginTop: "14px" }}>
           {place.note}
         </p>
+      )}
+
+      {place.rating !== undefined && (
+        <div style={{ marginTop: "14px" }}>
+          <Stars value={place.rating} />
+        </div>
       )}
 
       <div style={{ marginTop: "18px" }}>

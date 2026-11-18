@@ -19,6 +19,7 @@ const PLACE_SOURCES: readonly PlaceSource[] = [
   "map",
   "link",
   "google",
+  "mapstr",
   "ai",
   "share",
   "import",
@@ -150,6 +151,13 @@ export function normalizeUrl(value: unknown): string | undefined {
   }
 }
 
+/** A star rating rounded to the nearest half and clamped to [0.5, 5]; undefined when unrated. */
+export function normalizeRating(value: unknown): number | undefined {
+  const n = finite(value);
+  if (n === undefined || n <= 0) return undefined;
+  return Math.min(5, Math.max(0.5, Math.round(n * 2) / 2));
+}
+
 interface Stamps {
   createdAt: number;
   updatedAt: number;
@@ -182,6 +190,8 @@ function normalizePlace(raw: Record<string, unknown>, id: string): Place | null 
   };
   const url = normalizeUrl(raw.url);
   if (url !== undefined) place.url = url;
+  const rating = normalizeRating(raw.rating);
+  if (rating !== undefined) place.rating = rating;
   if (PLACE_SOURCES.includes(raw.source as PlaceSource)) place.source = raw.source as PlaceSource;
   return place;
 }

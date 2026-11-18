@@ -200,11 +200,14 @@ function commit(next: Doc): void {
   doc.value = next;
 }
 
-export type NewPlace = Omit<Place, "id" | "createdAt" | "updatedAt" | "deletedAt">;
+/** A place to add; `createdAt` is now unless given (an import keeps the original date). */
+export type NewPlace = Omit<Place, "id" | "createdAt" | "updatedAt" | "deletedAt"> & {
+  createdAt?: number;
+};
 
 export function addPlace(input: NewPlace): Place {
   const now = Date.now();
-  const place: Place = { ...input, id: newId(), createdAt: now, updatedAt: now };
+  const place: Place = { ...input, id: newId(), createdAt: input.createdAt ?? now, updatedAt: now };
   commit({ ...doc.value, places: { ...doc.value.places, [place.id]: place } });
   return place;
 }

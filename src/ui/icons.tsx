@@ -66,6 +66,7 @@ import {
   Square,
   Stamp,
   Star,
+  StarHalf,
   Store,
   Sun,
   Tag,
@@ -161,6 +162,8 @@ const UI_ICONS = {
   send: Send,
   spinner: Loader,
   keep: HardDriveDownload,
+  star: Star,
+  "star-half": StarHalf,
 } satisfies Record<string, IconNode>;
 
 export type IconName = keyof typeof UI_ICONS | "github";

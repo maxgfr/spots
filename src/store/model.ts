@@ -8,7 +8,15 @@
 export type PlaceState = "try" | "visited" | "favorite";
 
 /** Where a place came from. */
-export type PlaceSource = "search" | "map" | "link" | "google" | "ai" | "share" | "import";
+export type PlaceSource =
+  | "search"
+  | "map"
+  | "link"
+  | "google"
+  | "mapstr"
+  | "ai"
+  | "share"
+  | "import";
 
 export interface Place {
   id: string;
@@ -22,6 +30,8 @@ export interface Place {
   state: PlaceState;
   /** A link to the place: its website or the maps link it was pinned from. */
   url?: string;
+  /** The owner's stars, from 0.5 to 5 by halves; absent when not rated. */
+  rating?: number;
   source?: PlaceSource;
   createdAt: number;
   updatedAt: number;
