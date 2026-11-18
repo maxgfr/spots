@@ -1,15 +1,17 @@
 /**
  * The menu: sync, import and export, the AI, the offline map, language and
- * theme, and what leaves the device.
+ * theme, erasing the notebook, and what leaves the device.
  */
 import { useEffect, useState } from "preact/hooks";
 import { aiLabel } from "../../ai/settings";
-import { LANGS, type Lang, l, lang, setLang, tr } from "../../i18n";
+import { fmt, LANGS, type Lang, l, lang, plural, setLang, tr } from "../../i18n";
+import { exportBackup } from "../../import/backup";
 import { mapRef } from "../../map/MapView";
 import { keepArea, MAX_TILES } from "../../offline/keep";
-import { places, storageError } from "../../store/store";
+import { doc, lists, places, resetNotebook, storageError, undoReset } from "../../store/store";
+import { link } from "../../sync/sync";
 import { Icon, type IconName } from "../../ui/icons";
-import { ScreenHead, toast } from "../../ui/ui";
+import { downloadText, ScreenHead, toast } from "../../ui/ui";
 import { requestSnap } from "../Sheet";
 import { go, type Route, type Theme, theme } from "../state";
 import { syncLabel } from "./Sync";
@@ -26,6 +28,77 @@ function Item({ icon, title, sub, to }: { icon: IconName; title: string; sub: st
         <Icon name="next" />
       </button>
     </li>
+  );
+}
+
+/** Erasing every place, tag and list, after a confirmation that offers a backup first. */
+function Reset() {
+  const [asking, setAsking] = useState(false);
+  const count = places.value.length;
+  const erase = () => {
+    const before = resetNotebook();
+    setAsking(false);
+    toast(
+      tr(l("Notebook erased", "Carnet effacé")),
+      { label: tr(l("Undo", "Annuler")), run: () => undoReset(before) },
+      10_000,
+    );
+  };
+  return (
+    <div class="section stack" style={{ gap: "10px" }}>
+      <div class="label">{tr(l("Start over", "Repartir de zéro"))}</div>
+      {asking ? (
+        <div class="notice stack" style={{ gap: "10px" }} role="alert">
+          <p style={{ margin: 0 }}>
+            <strong>
+              {fmt(
+                l(
+                  "Erase {places}, {lists} and your tags?",
+                  "Effacer {places}, {lists} et tes tags ?",
+                ),
+                {
+                  places: `${count} ${plural(count, l("place", "lieu"), l("places", "lieux"))}`,
+                  lists: `${lists.value.length} ${plural(lists.value.length, l("list", "liste"), l("lists", "listes"))}`,
+                },
+              )}
+            </strong>
+          </p>
+          {link.value && (
+            <p class="small" style={{ margin: 0 }}>
+              {tr(
+                l(
+                  "Your notebook is synced: it is erased from your gist and your other devices too. The gist's history keeps the old versions.",
+                  "Ton carnet est synchronisé : il est aussi effacé de ton gist et de tes autres appareils. L'historique du gist garde les anciennes versions.",
+                ),
+              )}
+            </p>
+          )}
+          <button
+            type="button"
+            class="btn"
+            onClick={() => {
+              const day = new Date().toISOString().slice(0, 10);
+              downloadText(`spots-${day}.json`, exportBackup(doc.value, Date.now()));
+            }}
+          >
+            <Icon name="download" size={17} />
+            {tr(l("Download a backup first", "Télécharger une sauvegarde d'abord"))}
+          </button>
+          <div class="row">
+            <button type="button" class="btn danger" onClick={erase}>
+              {tr(l("Erase everything", "Tout effacer"))}
+            </button>
+            <button type="button" class="btn" onClick={() => setAsking(false)}>
+              {tr(l("Cancel", "Annuler"))}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" class="btn danger" onClick={() => setAsking(true)}>
+          {tr(l("Erase all data…", "Effacer toutes les données…"))}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -104,8 +177,8 @@ export function Menu() {
           title={tr(l("Import & export", "Import et export"))}
           sub={tr(
             l(
-              "Google Maps, Mapstr, JSON backup, GitHub",
-              "Google Maps, Mapstr, sauvegarde JSON, GitHub",
+              "Google Maps, Mapstr, JSON backup, GitHub, S3",
+              "Google Maps, Mapstr, sauvegarde JSON, GitHub, S3",
             ),
           )}
           to={{ name: "import" }}
@@ -186,13 +259,15 @@ export function Menu() {
         </fieldset>
       </div>
 
+      <Reset />
+
       <div class="section stack small" style={{ gap: "8px" }}>
         <div class="label">{tr(l("What leaves this device", "Ce qui sort de cet appareil"))}</div>
         <p class="muted" style={{ margin: 0 }}>
           {tr(
             l(
-              `Your ${places.value.length} places live in this browser. The map loads its tiles from OpenFreeMap; searches go to Photon (komoot) and Nominatim (OpenStreetMap). Only if you turn them on: your notebook goes to your own GitHub gist, and what you send to the AI goes to the provider you chose.`,
-              `Tes ${places.value.length} lieux vivent dans ce navigateur. La carte charge ses tuiles depuis OpenFreeMap ; les recherches vont à Photon (komoot) et Nominatim (OpenStreetMap). Seulement si tu les actives : ton carnet va dans ton propre gist GitHub, et ce que tu envoies à l'IA va au fournisseur choisi.`,
+              `Your ${places.value.length} places live in this browser. The map loads its tiles from OpenFreeMap; searches go to Photon (komoot) and Nominatim (OpenStreetMap). Only if you turn them on: your notebook goes to your own GitHub gist, repository or S3 bucket, and what you send to the AI goes to the provider you chose.`,
+              `Tes ${places.value.length} lieux vivent dans ce navigateur. La carte charge ses tuiles depuis OpenFreeMap ; les recherches vont à Photon (komoot) et Nominatim (OpenStreetMap). Seulement si tu les actives : ton carnet va dans ton propre gist GitHub, dépôt ou bucket S3, et ce que tu envoies à l'IA va au fournisseur choisi.`,
             ),
           )}
         </p>

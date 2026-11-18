@@ -112,102 +112,108 @@ function SetUp() {
   };
 
   return (
-    <form class="stack" style={{ gap: "10px" }} onSubmit={submit}>
-      <p class="small muted" style={{ margin: 0 }}>
-        {tr(
-          l(
-            "Or keep the backup in a GitHub repository of yours: each export is a commit, and the repository's history keeps every version.",
-            "Ou garde la sauvegarde dans un de tes dépôts GitHub : chaque export est un commit, et l'historique du dépôt garde toutes les versions.",
-          ),
-        )}
-      </p>
-      <ol class="stack small" style={{ margin: 0, paddingLeft: "20px", gap: "8px" }}>
-        <li>
-          {tr(l("Create a fine-grained token: ", "Crée un jeton fin (fine-grained) : "))}
-          <a href={REPO_TOKEN_URL} target="_blank" rel="noopener noreferrer">
-            {tr(l("open GitHub", "ouvrir GitHub"))}
-          </a>
-          .
-        </li>
-        <li>
+    <details class="disclose">
+      <summary>
+        <Icon name="github" size={17} />
+        {tr(l("Back up to a GitHub repository", "Sauvegarder dans un dépôt GitHub"))}
+      </summary>
+      <form class="stack" style={{ gap: "10px" }} onSubmit={submit}>
+        <p class="small muted" style={{ margin: 0 }}>
           {tr(
             l(
-              "Under “Repository access”, choose “Only select repositories” and pick your repository.",
-              "Dans « Repository access », choisis « Only select repositories » et prends ton dépôt.",
+              "Keep the backup in a GitHub repository of yours: each export is a commit, and the repository's history keeps every version.",
+              "Garde la sauvegarde dans un de tes dépôts GitHub : chaque export est un commit, et l'historique du dépôt garde toutes les versions.",
             ),
           )}
-        </li>
-        <li>
-          {tr(
-            l(
-              "Under “Repository permissions”, set Contents to “Read and write”. Nothing else is needed.",
-              "Dans « Repository permissions », mets Contents sur « Read and write ». Rien d'autre n'est nécessaire.",
-            ),
-          )}
-        </li>
-        <li>
-          {tr(
-            l(
-              "Generate it, copy it and paste it here with the repository's name.",
-              "Génère-le, copie-le et colle-le ici avec le nom du dépôt.",
-            ),
-          )}
-        </li>
-      </ol>
-      <label class="field">
-        <span class="label">{tr(l("Token", "Jeton"))}</span>
-        <input
-          class="input"
-          type="password"
-          autoComplete="off"
-          spellcheck={false}
-          value={token}
-          onInput={(e) => setToken(e.currentTarget.value)}
-          placeholder="github_pat_…"
-        />
-      </label>
-      <label class="field">
-        <span class="label">{tr(l("Repository", "Dépôt"))}</span>
-        <input
-          class="input"
-          autoComplete="off"
-          autoCapitalize="off"
-          spellcheck={false}
-          value={repo}
-          onInput={(e) => setRepo(e.currentTarget.value)}
-          placeholder={tr(l("owner/repo or its link", "propriétaire/dépôt ou son lien"))}
-        />
-      </label>
-      <label class="field">
-        <span class="label">{tr(l("File (optional)", "Fichier (facultatif)"))}</span>
-        <input
-          class="input"
-          autoComplete="off"
-          autoCapitalize="off"
-          spellcheck={false}
-          value={file}
-          onInput={(e) => setFile(e.currentTarget.value)}
-          placeholder={REPO_FILE}
-        />
-      </label>
-      <p class="hint" style={{ margin: 0 }}>
-        {tr(
-          l(
-            "The token is stored in this browser only and sent to api.github.com only.",
-            "Le jeton est gardé dans ce navigateur seulement et envoyé à api.github.com seulement.",
-          ),
-        )}
-      </p>
-      {error && (
-        <p class="error" role="alert" style={{ margin: 0 }}>
-          {error}
         </p>
-      )}
-      <button type="submit" class="btn" disabled={busy || !ready}>
-        <Icon name={busy ? "spinner" : "github"} size={17} {...(busy ? { class: "spin" } : {})} />
-        {tr(l("Save to GitHub", "Enregistrer sur GitHub"))}
-      </button>
-    </form>
+        <ol class="stack small" style={{ margin: 0, paddingLeft: "20px", gap: "8px" }}>
+          <li>
+            {tr(l("Create a fine-grained token: ", "Crée un jeton fin (fine-grained) : "))}
+            <a href={REPO_TOKEN_URL} target="_blank" rel="noopener noreferrer">
+              {tr(l("open GitHub", "ouvrir GitHub"))}
+            </a>
+            .
+          </li>
+          <li>
+            {tr(
+              l(
+                "Under “Repository access”, choose “Only select repositories” and pick your repository.",
+                "Dans « Repository access », choisis « Only select repositories » et prends ton dépôt.",
+              ),
+            )}
+          </li>
+          <li>
+            {tr(
+              l(
+                "Under “Repository permissions”, set Contents to “Read and write”. Nothing else is needed.",
+                "Dans « Repository permissions », mets Contents sur « Read and write ». Rien d'autre n'est nécessaire.",
+              ),
+            )}
+          </li>
+          <li>
+            {tr(
+              l(
+                "Generate it, copy it and paste it here with the repository's name.",
+                "Génère-le, copie-le et colle-le ici avec le nom du dépôt.",
+              ),
+            )}
+          </li>
+        </ol>
+        <label class="field">
+          <span class="label">{tr(l("Token", "Jeton"))}</span>
+          <input
+            class="input"
+            type="password"
+            autoComplete="off"
+            spellcheck={false}
+            value={token}
+            onInput={(e) => setToken(e.currentTarget.value)}
+            placeholder="github_pat_…"
+          />
+        </label>
+        <label class="field">
+          <span class="label">{tr(l("Repository", "Dépôt"))}</span>
+          <input
+            class="input"
+            autoComplete="off"
+            autoCapitalize="off"
+            spellcheck={false}
+            value={repo}
+            onInput={(e) => setRepo(e.currentTarget.value)}
+            placeholder={tr(l("owner/repo or its link", "propriétaire/dépôt ou son lien"))}
+          />
+        </label>
+        <label class="field">
+          <span class="label">{tr(l("File (optional)", "Fichier (facultatif)"))}</span>
+          <input
+            class="input"
+            autoComplete="off"
+            autoCapitalize="off"
+            spellcheck={false}
+            value={file}
+            onInput={(e) => setFile(e.currentTarget.value)}
+            placeholder={REPO_FILE}
+          />
+        </label>
+        <p class="hint" style={{ margin: 0 }}>
+          {tr(
+            l(
+              "The token is stored in this browser only and sent to api.github.com only.",
+              "Le jeton est gardé dans ce navigateur seulement et envoyé à api.github.com seulement.",
+            ),
+          )}
+        </p>
+        {error && (
+          <p class="error" role="alert" style={{ margin: 0 }}>
+            {error}
+          </p>
+        )}
+        <button type="submit" class="btn" disabled={busy || !ready}>
+          <Icon name={busy ? "spinner" : "github"} size={17} {...(busy ? { class: "spin" } : {})} />
+          {tr(l("Save to GitHub", "Enregistrer sur GitHub"))}
+        </button>
+      </form>
+    </details>
   );
 }
 

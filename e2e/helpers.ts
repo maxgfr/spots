@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { BrowserContext, Page } from "@playwright/test";
 
 /** Photon and Nominatim are answered locally so the tests do not depend on them. */
 export async function fakeGeocoder(page: Page): Promise<void> {
@@ -64,4 +64,50 @@ export async function pinBySearch(page: Page, query: string, name: RegExp): Prom
   await page.getByPlaceholder("Search a place, paste a link…").fill(query);
   await page.getByRole("button", { name }).first().click();
   await page.getByRole("button", { name: "Pin it" }).click();
+}
+
+/** A gist server in memory, shared by every page that uses it, like GitHub's own. */
+export function fakeGitHub() {
+  const gists = new Map<string, { description: string; content: string }>();
+  let seq = 0;
+  const attach = async (target: Page | BrowserContext) => {
+    await target.route("https://api.github.com/**", async (route) => {
+      const req = route.request();
+      if (req.headers().authorization !== "Bearer good-token") {
+        return route.fulfill({ status: 401, json: { message: "Bad credentials" } });
+      }
+      const url = new URL(req.url());
+      const path = url.pathname;
+      const method = req.method();
+      const view = (id: string) => {
+        const g = gists.get(id);
+        return (
+          g && { id, description: g.description, files: { "spots.json": { content: g.content } } }
+        );
+      };
+      if (path === "/user") return route.fulfill({ json: { login: "tester" } });
+      if (path === "/gists" && method === "GET") {
+        return route.fulfill({ json: [...gists.keys()].map(view) });
+      }
+      if (path === "/gists" && method === "POST") {
+        const body = req.postDataJSON();
+        const id = `g${++seq}`;
+        gists.set(id, { description: body.description, content: body.files["spots.json"].content });
+        return route.fulfill({ status: 201, json: view(id) });
+      }
+      const id = path.split("/")[2] ?? "";
+      const g = gists.get(id);
+      if (!g) return route.fulfill({ status: 404, json: { message: "Not Found" } });
+      if (method === "PATCH") g.content = req.postDataJSON().files["spots.json"].content;
+      return route.fulfill({ json: view(id) });
+    });
+  };
+  return { gists, attach };
+}
+
+/** Connects the Sync screen with a token. */
+export async function connect(page: Page, token: string) {
+  await page.goto("./#/sync");
+  await page.getByLabel("Token").fill(token);
+  await page.getByRole("button", { name: "Connect" }).click();
 }

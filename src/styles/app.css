@@ -1364,6 +1364,42 @@ select.input {
   color: var(--ink);
 }
 
+/* Linking a phone: the QR code stays dark on white in both themes, quiet zone included. */
+.pair-box {
+  align-items: center;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--paper-2);
+  text-align: center;
+}
+
+.qr {
+  display: block;
+  width: 240px;
+  max-width: 100%;
+  height: auto;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.pair-code {
+  margin: 0;
+  font: 800 34px / 1 var(--display);
+  letter-spacing: 0.12em;
+  color: var(--ink);
+  user-select: all;
+}
+
+.pair-input {
+  font: 800 24px / 1 var(--display);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.pair-input::placeholder {
+  letter-spacing: 0.12em;
+}
+
 .progress {
   height: 6px;
   border-radius: 3px;
@@ -1437,6 +1473,25 @@ select.input {
   border-radius: 8px;
 }
 
+/* An import running while another screen is open: a toast that stays, under the bar. */
+.import-pill {
+  position: absolute;
+  z-index: 40;
+  top: calc(var(--safe-top) + var(--bar-h) + 50px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.import-pill .toast {
+  gap: 8px;
+  padding: 8px 14px;
+  border: 0;
+  font: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
 /* MapLibre's own controls, in the shell's terms. */
 .maplibregl-ctrl-top-right {
   top: calc(var(--safe-top) + var(--bar-h) + 50px);
@@ -1470,4 +1525,18 @@ select.input {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* A backup destination not set up yet: folded under its name. */
+.disclose > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.disclose[open] > summary {
+  margin-bottom: 4px;
 }

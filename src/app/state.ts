@@ -19,10 +19,13 @@ export type Route =
   | { name: "import" }
   | { name: "ai" }
   | { name: "ai-settings" }
-  | { name: "share"; data: string };
+  | { name: "share"; data: string }
+  /** A phone opening the link of a pairing QR code. */
+  | { name: "pair"; payload: string };
 
 export function parseRoute(hash: string): Route {
   const h = hash.replace(/^#\/?/, "");
+  if (h.startsWith("pair=")) return { name: "pair", payload: h.slice(5) };
   const [head = "", ...rest] = h.split("/");
   const arg = rest.join("/");
   switch (head) {
@@ -69,13 +72,25 @@ export function href(r: Route): string {
       return "#/ai/settings";
     case "share":
       return `#/share/${r.data}`;
+    case "pair":
+      return `#pair=${r.payload}`;
     default:
       return `#/${r.name}`;
   }
 }
 
+/**
+ * The route in the address bar. A pairing link carries the sync access: once read, it leaves
+ * the address bar and the history, the payload living on in the route only.
+ */
+function routeFromLocation(): Route {
+  const r = parseRoute(location.hash);
+  if (r.name === "pair") history.replaceState(null, "", href({ name: "home" }));
+  return r;
+}
+
 export const route = signal<Route>(
-  typeof location === "undefined" ? { name: "home" } : parseRoute(location.hash),
+  typeof location === "undefined" ? { name: "home" } : routeFromLocation(),
 );
 
 /** How many screens this tab pushed: going back past them would leave the app. */
@@ -83,7 +98,7 @@ let depth = 0;
 
 if (typeof window !== "undefined") {
   window.addEventListener("hashchange", () => {
-    route.value = parseRoute(location.hash);
+    route.value = routeFromLocation();
   });
   window.addEventListener("popstate", () => {
     depth = Math.max(0, depth - 1);

@@ -51,7 +51,7 @@ const SAME_PLACE_METERS = 30;
 
 // --- Encoding ------------------------------------------------------------------------------
 
-function toBase64Url(bytes: Uint8Array): string {
+export function toBase64Url(bytes: Uint8Array): string {
   let binary = "";
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) {
@@ -60,7 +60,7 @@ function toBase64Url(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function fromBase64Url(text: string): Uint8Array | null {
+export function fromBase64Url(text: string): Uint8Array | null {
   if (!/^[A-Za-z0-9_-]*$/.test(text) || text.length % 4 === 1) return null;
   const b64 = text.replace(/-/g, "+").replace(/_/g, "/");
   try {

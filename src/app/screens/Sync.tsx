@@ -1,16 +1,18 @@
 /**
  * Connecting GitHub: the user creates a token that can only read and write
  * gists, pastes it once, and the notebook is kept in a secret gist of theirs.
+ * A phone joins by scanning a QR code shown here instead of pasting the token.
  */
 import { useEffect, useState } from "preact/hooks";
 import { l, locale, tr } from "../../i18n";
 import { GistError, gistUrl, TOKEN_URL } from "../../sync/gist";
+import { createPairing, formatCode, PAIR_TTL_MS } from "../../sync/pair";
 import { connect, disconnect, link, linkKept, syncNow, syncStatus } from "../../sync/sync";
 import { Icon } from "../../ui/icons";
-import { ScreenHead, toast } from "../../ui/ui";
+import { copyText, ScreenHead, toast } from "../../ui/ui";
 import { requestSnap } from "../Sheet";
 
-const ERRORS: Record<string, ReturnType<typeof l>> = {
+export const ERRORS: Record<string, ReturnType<typeof l>> = {
   auth: l(
     "GitHub refused this token. Check that you copied it whole.",
     "GitHub refuse ce jeton. Vérifie que tu l'as copié en entier.",
@@ -46,6 +48,133 @@ export function syncLabel(): string {
   if (!s.at) return tr(l("Synced with GitHub", "Synchronisé avec GitHub"));
   const time = new Date(s.at).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
   return `${tr(l("Synced at", "Synchronisé à"))} ${time}`;
+}
+
+/** A QR code as inline SVG, dark modules on white, the quiet zone included in `modules`. */
+function Qr({ modules, url }: { modules: boolean[][]; url: string }) {
+  const n = modules.length;
+  let d = "";
+  modules.forEach((row, y) => {
+    for (let x = 0; x < n; x++) {
+      if (!row[x]) continue;
+      let w = 1;
+      while (row[x + w]) w++;
+      d += `M${x} ${y}h${w}v1h-${w}z`;
+      x += w;
+    }
+  });
+  return (
+    <svg
+      class="qr"
+      viewBox={`0 0 ${n} ${n}`}
+      width={240}
+      height={240}
+      role="img"
+      aria-label={tr(l("QR code to link a phone", "QR code pour connecter un téléphone"))}
+      data-url={url}
+      shape-rendering="crispEdges"
+    >
+      <rect width={n} height={n} fill="#fff" />
+      <path d={d} fill="#000" />
+    </svg>
+  );
+}
+
+interface Shown {
+  url: string;
+  code: string;
+  modules: boolean[][];
+}
+
+/** The QR code and pairing code a phone needs to join the sync, made afresh each time. */
+function LinkPhone({ token }: { token: string }) {
+  const [shown, setShown] = useState<Shown | null>(null);
+  const [opening, setOpening] = useState(false);
+  const [expired, setExpired] = useState(false);
+
+  useEffect(() => {
+    if (!shown) return;
+    const t = setTimeout(() => setExpired(true), PAIR_TTL_MS);
+    return () => clearTimeout(t);
+  }, [shown]);
+
+  const show = async () => {
+    setOpening(true);
+    try {
+      // The QR encoder loads only when a QR code is shown.
+      const [pairing, { encode }] = await Promise.all([
+        createPairing(token, Date.now(), location.origin + location.pathname),
+        import("uqr"),
+      ]);
+      const modules = encode(pairing.url, { ecc: "L", border: 4 }).data;
+      setShown({ url: pairing.url, code: pairing.code, modules });
+      setExpired(false);
+    } catch {
+      toast(tr(l("The QR code could not be made", "Le QR code n'a pas pu être créé")));
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  const open = (
+    <button type="button" class="btn" disabled={opening} onClick={() => void show()}>
+      <Icon name={opening ? "spinner" : "qr"} size={17} {...(opening ? { class: "spin" } : {})} />
+      {expired
+        ? tr(l("Show a new QR code", "Afficher un nouveau QR code"))
+        : tr(l("Link a phone", "Connecter un téléphone"))}
+    </button>
+  );
+  if (!shown) return open;
+
+  return (
+    <section class="pair-box stack" aria-label={tr(l("Link a phone", "Connecter un téléphone"))}>
+      {expired ? (
+        <>
+          <p class="muted small" style={{ margin: 0 }}>
+            {tr(
+              l(
+                "This QR code has expired: they work for 10 minutes.",
+                "Ce QR code a expiré : ils marchent 10 minutes.",
+              ),
+            )}
+          </p>
+          {open}
+        </>
+      ) : (
+        <>
+          <Qr modules={shown.modules} url={shown.url} />
+          <p class="small" style={{ margin: 0 }}>
+            {tr(
+              l(
+                "Scan it with your phone's camera, then type this code:",
+                "Scanne-le avec l'appareil photo de ton téléphone, puis tape ce code :",
+              ),
+            )}
+          </p>
+          <p class="pair-code">{formatCode(shown.code)}</p>
+          <p class="hint" style={{ margin: 0 }}>
+            {tr(
+              l(
+                "Together, the QR code and this code give access to your gist sync: only show them to your own devices. They work for 10 minutes.",
+                "Ensemble, le QR code et ce code donnent accès à ta sync par gist : ne les montre qu'à tes propres appareils. Ils marchent 10 minutes.",
+              ),
+            )}
+          </p>
+        </>
+      )}
+      <div class="row" style={{ justifyContent: "center" }}>
+        {!expired && (
+          <button type="button" class="btn" onClick={() => void copyText(shown.url)}>
+            <Icon name="copy" size={17} />
+            {tr(l("Copy link", "Copier le lien"))}
+          </button>
+        )}
+        <button type="button" class="btn" onClick={() => setShown(null)}>
+          {tr(l("Hide", "Masquer"))}
+        </button>
+      </div>
+    </section>
+  );
 }
 
 export function Sync() {
@@ -119,6 +248,7 @@ export function Sync() {
             {tr(l("Open the gist", "Ouvrir le gist"))}
           </a>
         </div>
+        <LinkPhone token={linked.token} />
         <button
           type="button"
           class="btn danger"

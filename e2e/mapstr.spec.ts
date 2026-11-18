@@ -94,3 +94,87 @@ test("a Mapstr export comes in with its tags, stars and states", async ({ page }
     timeout: 15_000,
   });
 });
+
+const csvFile = { name: "mapstr.csv", mimeType: "text/csv", buffer: Buffer.from(csv) };
+const geojsonFile = {
+  name: "mapstr.geojson",
+  mimeType: "application/geo+json",
+  buffer: Buffer.from(JSON.stringify(geojson)),
+};
+
+test("the two Mapstr files can be picked one after the other", async ({ page }) => {
+  await page.goto("./#/import");
+  const input = page.locator('input[type="file"]');
+  await input.setInputFiles(geojsonFile);
+  await expect(page.getByText(/GeoJSON found — add the CSV/)).toBeVisible();
+  await input.setInputFiles(csvFile);
+  await expect(page.getByText(/3 places · 3 new tags · 1 to look up/)).toBeVisible();
+  await expect(page.getByText("Files: mapstr.geojson, mapstr.csv")).toBeVisible();
+  await expect(page.getByText(/GeoJSON found|CSV only/)).toHaveCount(0);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await expect(page.getByText("3 places added")).toBeVisible({ timeout: 15_000 });
+
+  await page.goto("./");
+  await page.getByText("Chez Odette").first().click();
+  await expect(page.getByRole("img", { name: "4.5 out of 5" })).toBeVisible();
+});
+
+test("the CSV imported after the GeoJSON brings the stars to the places", async ({ page }) => {
+  await page.goto("./#/import");
+  const input = page.locator('input[type="file"]');
+  await input.setInputFiles(geojsonFile);
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await expect(page.getByText("2 places added")).toBeVisible({ timeout: 15_000 });
+
+  await input.setInputFiles(csvFile);
+  await expect(page.getByText(/CSV only — places will be looked up/)).toBeVisible();
+  // Only Holybelly, not in the notebook yet, is looked up.
+  await expect(page.getByText(/3 places · 1 new tag · 1 to look up/)).toBeVisible();
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await expect(page.getByText(/1 place added · 1 updated · 1 already there/)).toBeVisible({
+    timeout: 15_000,
+  });
+
+  await page.goto("./#/tags");
+  await expect(page.getByRole("button", { name: "Restaurant 1 place" })).toBeVisible();
+  await page.goto("./");
+  await expect(page.locator(".rows li")).toHaveCount(3);
+  await page.getByText("Chez Odette").first().click();
+  await expect(page.getByRole("img", { name: "4.5 out of 5" })).toBeVisible();
+});
+
+test("an import goes on while another screen is open", async ({ page }) => {
+  // Places with no position, looked up one at a time: the fake geocoder knows three.
+  const rows = [
+    "Le Petit Cambodge",
+    "Le Syndicat",
+    "Holybelly",
+    "Nowhere One",
+    "Nowhere Two",
+    "Nowhere Three",
+    "Nowhere Four",
+    "Nowhere Five",
+  ].map((name) => `"2024-05-01T12:00:00.000Z","${name}","","","","4","Brunch",""`);
+  const slow = [csv.split("\n")[0], ...rows, ""].join("\n");
+  await page.goto("./#/import");
+  await page
+    .locator('input[type="file"]')
+    .setInputFiles({ name: "slow.csv", mimeType: "text/csv", buffer: Buffer.from(slow) });
+  await expect(page.getByText(/8 places · 1 new tag · 8 to look up/)).toBeVisible();
+  await page.getByRole("button", { name: "Import", exact: true }).click();
+  await expect(page.locator(".progress")).toBeVisible();
+
+  // Away from the screen, the import keeps going and says so.
+  await page.getByRole("button", { name: "spots, back to the map" }).click();
+  const pill = page.getByRole("button", { name: /Importing… \d \/ 8/ });
+  await expect(pill).toBeVisible();
+  await pill.click();
+  await expect(page.getByText("3 places added")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("5 not found on the map")).toBeVisible();
+  await expect(pill).toHaveCount(0);
+
+  await page.goto("./");
+  for (const name of ["Le Petit Cambodge", "Le Syndicat", "Holybelly"]) {
+    await expect(page.getByText(name).first()).toBeVisible();
+  }
+});

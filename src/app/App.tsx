@@ -15,9 +15,10 @@ import { currentSnap, Sheet } from "./Sheet";
 import { Ai } from "./screens/Ai";
 import { AiSettings } from "./screens/AiSettings";
 import { Home } from "./screens/Home";
-import { Import } from "./screens/Import";
+import { Import, ImportPill } from "./screens/Import";
 import { ListDetail, Lists } from "./screens/Lists";
 import { Menu } from "./screens/Menu";
+import { Pair } from "./screens/Pair";
 import { EditPlace, NewPlace } from "./screens/PlaceForm";
 import { PlaceView } from "./screens/PlaceView";
 import { SharePreview } from "./screens/SharePreview";
@@ -52,6 +53,8 @@ function Screen() {
       return <AiSettings />;
     case "share":
       return <SharePreview data={r.data} />;
+    case "pair":
+      return <Pair payload={r.payload} />;
     default:
       return <Home />;
   }
@@ -287,6 +290,7 @@ export function App() {
       <Sheet>
         <Screen />
       </Sheet>
+      <ImportPill />
       <Toasts />
     </div>
   );

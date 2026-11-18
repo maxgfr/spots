@@ -48,6 +48,7 @@ function fakeRepo() {
 
 async function setUp(page: Page) {
   await page.goto("./#/import");
+  await page.getByText("Back up to a GitHub repository").click();
   await page.getByLabel("Token").fill("good-token");
   await page.getByLabel("Repository").fill("https://github.com/tester/notes");
   await page.getByRole("button", { name: "Save to GitHub" }).click();
@@ -104,6 +105,7 @@ test("a repository that is not one, or a refused token, says so", async ({ page 
   const github = fakeRepo();
   await github.attach(page);
   await page.goto("./#/import");
+  await page.getByText("Back up to a GitHub repository").click();
   await page.getByLabel("Token").fill("good-token");
   await page.getByLabel("Repository").fill("not a repo");
   await page.getByRole("button", { name: "Save to GitHub" }).click();

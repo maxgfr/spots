@@ -1,56 +1,11 @@
-import { type BrowserContext, expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { strToU8, zipSync } from "fflate";
-import { english, fakeGeocoder, pinBySearch } from "./helpers";
+import { connect, english, fakeGeocoder, fakeGitHub, pinBySearch } from "./helpers";
 
 test.beforeEach(async ({ page }) => {
   await fakeGeocoder(page);
   await english(page);
 });
-
-/** A gist server in memory, shared by every page that uses it, like GitHub's own. */
-function fakeGitHub() {
-  const gists = new Map<string, { description: string; content: string }>();
-  let seq = 0;
-  const attach = async (target: Page | BrowserContext) => {
-    await target.route("https://api.github.com/**", async (route) => {
-      const req = route.request();
-      if (req.headers().authorization !== "Bearer good-token") {
-        return route.fulfill({ status: 401, json: { message: "Bad credentials" } });
-      }
-      const url = new URL(req.url());
-      const path = url.pathname;
-      const method = req.method();
-      const view = (id: string) => {
-        const g = gists.get(id);
-        return (
-          g && { id, description: g.description, files: { "spots.json": { content: g.content } } }
-        );
-      };
-      if (path === "/user") return route.fulfill({ json: { login: "tester" } });
-      if (path === "/gists" && method === "GET") {
-        return route.fulfill({ json: [...gists.keys()].map(view) });
-      }
-      if (path === "/gists" && method === "POST") {
-        const body = req.postDataJSON();
-        const id = `g${++seq}`;
-        gists.set(id, { description: body.description, content: body.files["spots.json"].content });
-        return route.fulfill({ status: 201, json: view(id) });
-      }
-      const id = path.split("/")[2] ?? "";
-      const g = gists.get(id);
-      if (!g) return route.fulfill({ status: 404, json: { message: "Not Found" } });
-      if (method === "PATCH") g.content = req.postDataJSON().files["spots.json"].content;
-      return route.fulfill({ json: view(id) });
-    });
-  };
-  return { gists, attach };
-}
-
-async function connect(page: Page, token: string) {
-  await page.goto("./#/sync");
-  await page.getByLabel("Token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
-}
 
 test("two browsers sync through the same gist, deletions included", async ({ page, browser }) => {
   const github = fakeGitHub();

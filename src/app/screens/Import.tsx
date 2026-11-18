@@ -2,134 +2,33 @@
  * Bringing places in: a Google Takeout export (the zip as downloaded, or its
  * "Saved Places.json" and saved list CSV files), a Mapstr export (its CSV and
  * GeoJSON, joined into one batch with tags, stars and dates) or a spots backup.
- * Google's lists rarely carry coordinates, so those places are found by name,
- * one at a time, and the ones that cannot be found are listed rather than guessed.
+ * The import itself lives in importJob, so it goes on when this screen is left;
+ * this screen shows it, and ImportPill shows it over the other screens.
  */
-import { unzipSync } from "fflate";
-import { useEffect, useState } from "preact/hooks";
-import { search } from "../../geo/geocode";
+import { useEffect } from "preact/hooks";
 import { fmt, l, plural, tr } from "../../i18n";
-import { exportBackup, parseBackup } from "../../import/backup";
-import { parseCsv } from "../../import/csv";
-import {
-  combineMapstr,
-  isMapstrCsvHeader,
-  isMapstrGeojson,
-  type MapstrCsvPlace,
-  type MapstrGeoPlace,
-  parseMapstrCsv,
-  parseMapstrGeojson,
-} from "../../import/mapstr";
-import {
-  type ImportedTag,
-  listNameFromFile,
-  parseSavedListCsv,
-  parseSavedPlaces,
-  type TakeoutPlace,
-} from "../../import/takeout";
-import { fitPlaces } from "../../map/MapView";
-import { distanceMeters, foldName } from "../../share/share";
-import type { Doc, PlaceSource, PlaceState } from "../../store/model";
-import { addList, addPlace, addTag, doc, lists, mergeIn, places, tags } from "../../store/store";
+import { exportBackup } from "../../import/backup";
+import { findExisting } from "../../import/enrich";
+import { foldName } from "../../share/share";
+import { doc, places, tags } from "../../store/store";
 import { Icon } from "../../ui/icons";
-import { downloadText, ScreenHead, toast } from "../../ui/ui";
+import { downloadText, ScreenHead } from "../../ui/ui";
+import {
+  addFiles,
+  type Batch,
+  error as importError,
+  found as importFound,
+  progress as importProgress,
+  reading as importReading,
+  result as importResult,
+  reset,
+  resultParts,
+  run,
+} from "../importJob";
 import { requestSnap } from "../Sheet";
-import { go } from "../state";
+import { go, route } from "../state";
 import { RepoBackup } from "./RepoBackup";
-
-interface Batch {
-  /** The list these places go to, or null for none. */
-  list: string | null;
-  /** The state of its places, unless a place has its own. */
-  state: PlaceState;
-  source: PlaceSource;
-  places: TakeoutPlace[];
-}
-
-interface Found {
-  batches: Batch[];
-  backup: Doc | null;
-  skipped: string[];
-}
-
-const FAVOURITE_LISTS = /^(favou?rites?|favoris|starred|lieux favoris|adresses favorites)/i;
-
-function stateForList(name: string): PlaceState {
-  return FAVOURITE_LISTS.test(name.trim()) ? "favorite" : "try";
-}
-
-/** The header of a CSV text: its first line, read alone. */
-function csvHeader(text: string): string[] {
-  return parseCsv(text.split(/\r\n|\n|\r/, 1)[0] ?? "")[0] ?? [];
-}
-
-async function readFiles(files: File[]): Promise<Found> {
-  const out: Found = { batches: [], backup: null, skipped: [] };
-  const entries: { name: string; text: string }[] = [];
-  for (const f of files) {
-    if (/\.zip$/i.test(f.name)) {
-      const zip = unzipSync(new Uint8Array(await f.arrayBuffer()), {
-        filter: (file) => /\.(json|geojson|csv)$/i.test(file.name),
-      });
-      const dec = new TextDecoder();
-      for (const [name, data] of Object.entries(zip))
-        entries.push({ name, text: dec.decode(data) });
-    } else entries.push({ name: f.name, text: await f.text() });
-  }
-  // A Mapstr export comes in two files, gathered here and joined once all are read.
-  const mapstrGeo: MapstrGeoPlace[] = [];
-  const mapstrCsv: MapstrCsvPlace[] = [];
-  let mapstrFiles = 0;
-  for (const e of entries) {
-    if (/\.csv$/i.test(e.name)) {
-      if (isMapstrCsvHeader(csvHeader(e.text))) {
-        mapstrCsv.push(...parseMapstrCsv(e.text));
-        mapstrFiles++;
-        continue;
-      }
-      const list = parseSavedListCsv(e.text);
-      if (list.length > 0) {
-        const name = listNameFromFile(e.name);
-        out.batches.push({
-          list: name,
-          state: stateForList(name),
-          source: "google",
-          places: list,
-        });
-      } else out.skipped.push(e.name);
-      continue;
-    }
-    let json: unknown;
-    try {
-      json = JSON.parse(e.text);
-    } catch {
-      out.skipped.push(e.name);
-      continue;
-    }
-    if (isMapstrGeojson(json)) {
-      mapstrGeo.push(...parseMapstrGeojson(json));
-      mapstrFiles++;
-      continue;
-    }
-    const backup = parseBackup(e.text);
-    if (backup && Object.keys(backup.places).length + Object.keys(backup.lists).length > 0) {
-      out.backup = backup;
-      continue;
-    }
-    const saved = parseSavedPlaces(json);
-    if (saved.length > 0) {
-      // Saved Places.json holds the starred places.
-      out.batches.push({ list: null, state: "favorite", source: "google", places: saved });
-    } else out.skipped.push(e.name);
-  }
-  if (mapstrFiles > 0) {
-    const mapstr = combineMapstr(mapstrGeo, mapstrCsv);
-    // Each place carries its own state; "visited" is only the fallback.
-    if (mapstr.length > 0)
-      out.batches.push({ list: null, state: "visited", source: "mapstr", places: mapstr });
-  }
-  return out;
-}
+import { S3Backup } from "./S3Backup";
 
 /** The names of the tags an import would create: those no alive tag already has. */
 function newTagNames(batches: Batch[]): string[] {
@@ -144,140 +43,49 @@ function newTagNames(batches: Batch[]): string[] {
   return [...out.values()];
 }
 
+/** The import's progress, shown over the other screens while it runs; a tap opens it. */
+export function ImportPill() {
+  const p = importProgress.value;
+  if (!p || route.value.name === "import") return null;
+  return (
+    <div class="import-pill">
+      <button type="button" class="toast" onClick={() => go({ name: "import" })}>
+        <Icon name="spinner" size={16} class="spin" />
+        {fmt(l("Importing… {done} / {total}", "Import… {done} / {total}"), p)}
+      </button>
+    </div>
+  );
+}
+
 export function Import() {
-  const [found, setFound] = useState<Found | null>(null);
-  const [reading, setReading] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [result, setResult] = useState<{
-    added: number;
-    existing: number;
-    missing: string[];
-  } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const found = importFound.value;
+  const reading = importReading.value;
+  const progress = importProgress.value;
+  const result = importResult.value;
+  const error = importError.value;
 
   useEffect(() => {
     requestSnap("full");
   }, []);
 
-  const pick = async (e: Event) => {
+  const pick = (e: Event) => {
     const input = e.currentTarget as HTMLInputElement;
     const files = [...(input.files ?? [])];
     input.value = "";
-    if (files.length === 0) return;
-    setReading(true);
-    setError(null);
-    setResult(null);
-    try {
-      const f = await readFiles(files);
-      if (f.batches.length === 0 && !f.backup) {
-        setError(
-          tr(
-            l(
-              "No places found in these files. Pick the Takeout zip, “Saved Places.json”, the CSV files of your saved lists, the CSV and GeoJSON files of a Mapstr export, or a spots backup.",
-              "Aucun lieu trouvé dans ces fichiers. Choisis le zip Takeout, « Saved Places.json », les fichiers CSV de tes listes enregistrées, les fichiers CSV et GeoJSON d'un export Mapstr, ou une sauvegarde spots.",
-            ),
-          ),
-        );
-        setFound(null);
-      } else setFound(f);
-    } catch {
-      setError(tr(l("These files could not be read.", "Impossible de lire ces fichiers.")));
-    } finally {
-      setReading(false);
-    }
+    void addFiles(files);
   };
 
-  const run = async () => {
-    if (!found) return;
-    if (found.backup) {
-      mergeIn(found.backup);
-      toast(tr(l("Backup merged into your notebook", "Sauvegarde fusionnée dans ton carnet")));
-    }
-    const total = found.batches.reduce((n, b) => n + b.places.length, 0);
-    let done = 0;
-    let added = 0;
-    let existing = 0;
-    const missing: string[] = [];
-    const listIds = new Map<string, string>();
-    const tagIds = new Map<string, string>();
-    // A tag is made only when a place that carries it is added, and once per name.
-    const tagIdOf = (t: ImportedTag): string => {
-      const key = foldName(t.name);
-      const id =
-        tagIds.get(key) ??
-        tags.value.find((x) => foldName(x.name) === key)?.id ??
-        addTag({ name: t.name, color: t.color, icon: t.icon }).id;
-      tagIds.set(key, id);
-      return id;
-    };
-    const addedPlaces = [];
-    setProgress({ done, total });
-    for (const batch of found.batches) {
-      let listId: string | null = null;
-      if (batch.list) {
-        const same = lists.value.find((x) => foldName(x.name) === foldName(batch.list ?? ""));
-        listId = listIds.get(batch.list) ?? same?.id ?? addList({ name: batch.list }).id;
-        listIds.set(batch.list, listId);
-      }
-      for (const t of batch.places) {
-        let lat = t.lat;
-        let lng = t.lng;
-        let address = t.address;
-        if (lat === undefined || lng === undefined) {
-          try {
-            const [hit] = await search([t.name, t.address].filter(Boolean).join(" "), { limit: 1 });
-            if (hit) {
-              lat = hit.lat;
-              lng = hit.lng;
-              address ||= hit.address;
-            }
-          } catch {}
-          await new Promise((r) => setTimeout(r, 350));
-        }
-        done++;
-        setProgress({ done, total });
-        if (lat === undefined || lng === undefined) {
-          missing.push(t.name);
-          continue;
-        }
-        const name = foldName(t.name);
-        const dupe = places.value.find(
-          (p) => foldName(p.name) === name && distanceMeters(p.lat, p.lng, lat, lng) < 50,
-        );
-        if (dupe) {
-          existing++;
-          continue;
-        }
-        addedPlaces.push(
-          addPlace({
-            name: t.name,
-            address,
-            lat,
-            lng,
-            note: t.note,
-            tagIds: [...new Set((t.tags ?? []).map(tagIdOf))],
-            listIds: listId ? [listId] : [],
-            state: t.state ?? batch.state,
-            ...(t.url && /^https?:\/\//.test(t.url) ? { url: t.url } : {}),
-            ...(t.rating !== undefined ? { rating: t.rating } : {}),
-            ...(t.createdAt !== undefined ? { createdAt: t.createdAt } : {}),
-            source: batch.source,
-          }),
-        );
-        added++;
-      }
-    }
-    setProgress(null);
-    setFound(null);
-    setResult({ added, existing, missing });
-    if (addedPlaces.length > 0) fitPlaces(addedPlaces);
-  };
-
+  // Places already in the notebook are not looked up again.
   const pending = found
-    ? found.batches.reduce((n, b) => n + b.places.filter((p) => p.lat === undefined).length, 0)
+    ? found.batches.reduce(
+        (n, b) =>
+          n + b.places.filter((p) => p.lat === undefined && !findExisting(places.value, p)).length,
+        0,
+      )
     : 0;
   const count = found ? found.batches.reduce((n, b) => n + b.places.length, 0) : 0;
   const newTags = found ? newTagNames(found.batches).length : 0;
+  const counts = result ? resultParts(result) : [];
 
   return (
     <div class="stack">
@@ -309,8 +117,8 @@ export function Import() {
           <li>
             {tr(
               l(
-                "Pick both files it gives, the CSV and the GeoJSON, together: the CSV carries your stars and dates, the GeoJSON the positions and tag colours.",
-                "Choisis ensemble les deux fichiers obtenus, le CSV et le GeoJSON : le CSV porte tes étoiles et les dates, le GeoJSON les positions et les couleurs des tags.",
+                "Pick both files it gives, the CSV and the GeoJSON, together or one after the other: the CSV carries your stars and dates, the GeoJSON the positions and tag colours.",
+                "Choisis les deux fichiers obtenus, le CSV et le GeoJSON, ensemble ou l'un après l'autre : le CSV porte tes étoiles et les dates, le GeoJSON les positions et les couleurs des tags.",
               ),
             )}
           </li>
@@ -323,7 +131,9 @@ export function Import() {
           size={18}
           {...(reading ? { class: "spin" } : {})}
         />
-        {tr(l("Choose files", "Choisir des fichiers"))}
+        {found
+          ? tr(l("Add files", "Ajouter des fichiers"))
+          : tr(l("Choose files", "Choisir des fichiers"))}
         <input
           type="file"
           multiple
@@ -373,15 +183,43 @@ export function Import() {
               )}
             </p>
           )}
+          {found.mapstr && !found.mapstr.csv && (
+            <p style={{ margin: 0 }}>
+              {tr(
+                l(
+                  "Mapstr GeoJSON found — add the CSV to bring your stars and dates.",
+                  "GeoJSON Mapstr trouvé — ajoute le CSV pour avoir tes étoiles et les dates.",
+                ),
+              )}
+            </p>
+          )}
+          {found.mapstr && !found.mapstr.geo && (
+            <p style={{ margin: 0 }}>
+              {tr(
+                l(
+                  "Mapstr CSV only — places will be looked up by address; add the GeoJSON for exact positions.",
+                  "CSV Mapstr seul — les lieux seront cherchés par leur adresse ; ajoute le GeoJSON pour des positions exactes.",
+                ),
+              )}
+            </p>
+          )}
+          <p class="small" style={{ margin: 0 }}>
+            {tr(l("Files:", "Fichiers :"))} {found.files.join(", ")}
+          </p>
           {found.skipped.length > 0 && (
             <p class="small" style={{ margin: 0 }}>
               {tr(l("Ignored:", "Ignorés :"))} {found.skipped.slice(0, 4).join(", ")}
               {found.skipped.length > 4 ? "…" : ""}
             </p>
           )}
-          <button type="button" class="btn primary" onClick={() => void run()}>
-            {tr(l("Import", "Importer"))}
-          </button>
+          <div class="actions" style={{ gridTemplateColumns: "2fr 1fr" }}>
+            <button type="button" class="btn primary" onClick={() => void run()}>
+              {tr(l("Import", "Importer"))}
+            </button>
+            <button type="button" class="btn" onClick={reset}>
+              {tr(l("Clear", "Effacer"))}
+            </button>
+          </div>
         </div>
       )}
 
@@ -399,16 +237,8 @@ export function Import() {
       {result && (
         <div class="notice stack" style={{ gap: "8px" }} role="status">
           <p style={{ margin: 0 }}>
-            <strong>
-              {result.added}{" "}
-              {plural(
-                result.added,
-                l("place added", "lieu ajouté"),
-                l("places added", "lieux ajoutés"),
-              )}
-            </strong>
-            {result.existing > 0 &&
-              ` · ${result.existing} ${plural(result.existing, l("already there", "déjà présent"), l("already there", "déjà présents"))}`}
+            <strong>{counts[0]}</strong>
+            {counts.slice(1).map((c) => ` · ${c}`)}
           </p>
           {result.missing.length > 0 && (
             <details>
@@ -450,6 +280,7 @@ export function Import() {
           {tr(l("Download a backup", "Télécharger une sauvegarde"))}
         </button>
         <RepoBackup />
+        <S3Backup />
       </div>
     </div>
   );

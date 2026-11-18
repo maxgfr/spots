@@ -53,6 +53,7 @@ import {
   Pencil,
   Pizza,
   Plus,
+  QrCode,
   RefreshCw,
   Sailboat,
   Salad,
@@ -164,6 +165,7 @@ const UI_ICONS = {
   keep: HardDriveDownload,
   star: Star,
   "star-half": StarHalf,
+  qr: QrCode,
 } satisfies Record<string, IconNode>;
 
 export type IconName = keyof typeof UI_ICONS | "github";

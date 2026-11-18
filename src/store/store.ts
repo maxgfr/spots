@@ -23,6 +23,7 @@ import {
   type Tag,
   type TagColor,
 } from "./model";
+import { eraseAll, undoErase } from "./reset";
 
 /** Where the notebook lived before IndexedDB: now merged in, then removed, and a fallback. */
 const KEY = "spots:v1";
@@ -320,4 +321,16 @@ export function mergeIn(other: Doc): void {
 
 export function replaceDoc(next: Doc): void {
   commit(next);
+}
+
+/** Erases every place, tag and list (the starter tags come back); resolves to the notebook before, for an undo. */
+export function resetNotebook(): Doc {
+  const before = doc.value;
+  commit(eraseAll(before, Date.now(), starterDoc()));
+  return before;
+}
+
+/** The undo of resetNotebook. */
+export function undoReset(before: Doc): void {
+  commit(undoErase(doc.value, before, Date.now()));
 }
