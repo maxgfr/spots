@@ -11,7 +11,9 @@ test.beforeEach(async ({ page }) => {
 test("a first visit explains how to pin", async ({ page }) => {
   await page.goto("./");
   await expect(page.getByRole("heading", { name: "Your notebook is empty" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Import from Google Maps" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Import from Google Maps or Mapstr" }),
+  ).toBeVisible();
 });
 
 test("search, pin, tag, and it survives a reload", async ({ page }) => {

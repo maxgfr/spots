@@ -1,10 +1,10 @@
 /**
  * Pinning a new place (from the draft) or editing one: name, address, note,
- * tags, lists, state and link. New tags and lists can be made on the spot.
+ * tags, lists, state, stars and link. New tags and lists can be made on the spot.
  */
 import { useEffect, useRef, useState } from "preact/hooks";
 import { search } from "../../geo/geocode";
-import { l, tr } from "../../i18n";
+import { l, plural, tr } from "../../i18n";
 import { showPoint } from "../../map/MapView";
 import { type PlaceState, TAG_COLORS } from "../../store/model";
 import {
@@ -20,12 +20,21 @@ import {
 } from "../../store/store";
 import { INKS } from "../../ui/colors";
 import { Icon, TagGlyph } from "../../ui/icons";
-import { inkStyle, ScreenHead, StateToggles, tagInk, toast } from "../../ui/ui";
+import {
+  inkStyle,
+  ScreenHead,
+  StarGlyph,
+  StateToggles,
+  starKind,
+  tagInk,
+  toast,
+} from "../../ui/ui";
 import { requestSnap } from "../Sheet";
 import { back, type Draft, draft, go } from "../state";
 
 interface Form extends Draft {
   state: PlaceState;
+  rating?: number;
 }
 
 export function NewPlace() {
@@ -66,6 +75,7 @@ export function EditPlace({ id }: { id: string }) {
         ...(p.url ? { url: p.url } : {}),
         source: p.source ?? "map",
         state: p.state,
+        ...(p.rating !== undefined ? { rating: p.rating } : {}),
       }}
     />
   );
@@ -126,6 +136,7 @@ function PlaceForm({ id, initial }: { id?: string; initial: Form }) {
       listIds: f.listIds,
       state: f.state,
       ...(url ? { url } : {}),
+      ...(f.rating !== undefined ? { rating: f.rating } : {}),
     };
     if (isNew) {
       const p = addPlace({ ...fields, source: f.source });
@@ -133,7 +144,7 @@ function PlaceForm({ id, initial }: { id?: string; initial: Form }) {
       go({ name: "place", id: p.id }, { replace: true });
       toast(tr(l("Pinned", "Épinglé")));
     } else {
-      updatePlace(id, { ...fields, url: url || undefined });
+      updatePlace(id, { ...fields, url: url || undefined, rating: f.rating });
       back({ name: "place", id });
     }
   };
@@ -325,6 +336,29 @@ function PlaceForm({ id, initial }: { id?: string; initial: Form }) {
           ink={tagInk(tags.value.find((t) => f.tagIds.includes(t.id)))}
           onChange={(v) => set("state", v)}
         />
+      </div>
+
+      <div class="field">
+        <span class="label">{tr(l("Rating", "Étoiles"))}</span>
+        <fieldset class="rating" aria-label={tr(l("Rating", "Étoiles"))}>
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button
+              key={n}
+              type="button"
+              aria-pressed={f.rating === n}
+              aria-label={`${n} ${plural(n, l("star", "étoile"), l("stars", "étoiles"))}`}
+              // Tapping the rating already given takes it away.
+              onClick={() =>
+                setF((cur) => {
+                  const { rating, ...rest } = cur;
+                  return rating === n ? rest : { ...rest, rating: n };
+                })
+              }
+            >
+              <StarGlyph kind={starKind(f.rating, n)} size={26} />
+            </button>
+          ))}
+        </fieldset>
       </div>
 
       <label class="field">

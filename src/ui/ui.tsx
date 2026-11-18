@@ -1,11 +1,11 @@
 /**
  * Shared pieces: the mini label (a place's tag and state, as on the map),
- * screen headers, toasts with an undo, and small helpers.
+ * screen headers, toasts with an undo, star ratings, and small helpers.
  */
 import { signal } from "@preact/signals";
 import type { ComponentChildren } from "preact";
 import { back } from "../app/state";
-import { l, tr } from "../i18n";
+import { fmt, l, locale, tr } from "../i18n";
 import type { Place, PlaceState, Tag } from "../store/model";
 import { mainTag } from "../store/store";
 import { INKS, type Ink, UNTAGGED } from "./colors";
@@ -159,6 +159,39 @@ export function downloadText(name: string, text: string, type = "application/jso
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** How the star at position `n` (1 to 5) is drawn for a rating. */
+export function starKind(rating: number | undefined, n: number): "full" | "half" | "empty" {
+  if (rating === undefined) return "empty";
+  if (rating >= n) return "full";
+  return rating >= n - 0.5 ? "half" : "empty";
+}
+
+/** One star: an outline, filled whole or on its left half. */
+export function StarGlyph({ kind, size = 18 }: { kind: "full" | "half" | "empty"; size?: number }) {
+  return (
+    <span class={`star star-${kind}`}>
+      <Icon name="star" size={size} />
+      {kind === "half" && <Icon name="star-half" size={size} />}
+    </span>
+  );
+}
+
+/** "4.5 out of 5", for a rating read aloud. */
+export function ratingLabel(rating: number): string {
+  return fmt(l("{n} out of 5", "{n} sur 5"), { n: rating.toLocaleString(locale()) });
+}
+
+/** A rating as five stars, read-only. */
+export function Stars({ value, size = 18 }: { value: number; size?: number }) {
+  return (
+    <span class="stars" role="img" aria-label={ratingLabel(value)}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <StarGlyph key={n} kind={starKind(value, n)} size={size} />
+      ))}
+    </span>
+  );
 }
 
 const STATES: { id: PlaceState; label: ReturnType<typeof l> }[] = [

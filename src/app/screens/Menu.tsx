@@ -102,7 +102,12 @@ export function Menu() {
         <Item
           icon="upload"
           title={tr(l("Import & export", "Import et export"))}
-          sub={tr(l("Google Maps, JSON backup", "Google Maps, sauvegarde JSON"))}
+          sub={tr(
+            l(
+              "Google Maps, Mapstr, JSON backup, GitHub",
+              "Google Maps, Mapstr, sauvegarde JSON, GitHub",
+            ),
+          )}
           to={{ name: "import" }}
         />
         <Item

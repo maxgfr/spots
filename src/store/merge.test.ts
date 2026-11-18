@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { merge, normalizeDoc, purgeTombstones, sameDoc } from "./merge";
+import { merge, normalizeDoc, normalizeRating, purgeTombstones, sameDoc } from "./merge";
 import type { Doc, Place, Tag } from "./model";
 import { emptyDoc } from "./model";
 
@@ -233,5 +233,38 @@ describe("normalizeDoc", () => {
   test("uses the key when the id is missing", () => {
     const doc = normalizeDoc({ lists: { l1: { name: "Paris" } } });
     expect(doc?.lists.l1?.id).toBe("l1");
+  });
+});
+
+describe("normalizeRating", () => {
+  test("rounds to the nearest half and clamps into [0.5, 5]", () => {
+    expect(normalizeRating(3.5)).toBe(3.5);
+    expect(normalizeRating(4)).toBe(4);
+    expect(normalizeRating(3.74)).toBe(3.5);
+    expect(normalizeRating(3.76)).toBe(4);
+    expect(normalizeRating(0.1)).toBe(0.5);
+    expect(normalizeRating(9)).toBe(5);
+  });
+
+  test("leaves out what is not a rating", () => {
+    expect(normalizeRating(0)).toBeUndefined();
+    expect(normalizeRating(-2)).toBeUndefined();
+    expect(normalizeRating(Number.NaN)).toBeUndefined();
+    expect(normalizeRating(Number.POSITIVE_INFINITY)).toBeUndefined();
+    expect(normalizeRating("4")).toBeUndefined();
+    expect(normalizeRating(null)).toBeUndefined();
+    expect(normalizeRating(undefined)).toBeUndefined();
+  });
+
+  test("is kept on a place, and dropped when invalid", () => {
+    const doc = normalizeDoc({
+      places: {
+        a: { id: "a", name: "A", lat: 1, lng: 2, rating: 4.5, source: "mapstr" },
+        b: { id: "b", name: "B", lat: 1, lng: 2, rating: "five" },
+      },
+    });
+    expect(doc?.places.a?.rating).toBe(4.5);
+    expect(doc?.places.a?.source).toBe("mapstr");
+    expect(doc?.places.b && "rating" in doc.places.b).toBe(false);
   });
 });
