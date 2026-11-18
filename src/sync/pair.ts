@@ -6,9 +6,12 @@
  * fragment, so it never reaches a server, and it stops working after ten minutes.
  *
  * Payload: base64url of version (1 byte) | salt (16) | iv (12) | AES-GCM ciphertext of the
- * JSON `{ token, exp, target? }`, under a key derived from the code with PBKDF2-SHA-256. The
- * version byte is authenticated with the ciphertext. `target` is the repository file; without
+ * JSON `{ token, exp, target?, backup? }`, under a key derived from the code with PBKDF2-SHA-256.
+ * The version byte is authenticated with the ciphertext. `target` is the repository file; without
  * it (every payload made before repositories could sync) the sync is the account's gist.
+ * `backup` is the repository the computer backs up to by hand (`{ token?, owner, repo, branch,
+ * path }`, the token left out when it is the sync's own, to keep the QR code light); payloads
+ * made before it was handed over have none, and apps made before then ignore it.
  */
 import { fromBase64Url, toBase64Url } from "../share/share";
 import { cleanPath, parseRepo, type RepoTarget } from "./repo";
@@ -51,21 +54,64 @@ export interface PairTarget extends RepoTarget {
   kind: "repo";
 }
 
-/** What a pairing hands over: the token, and the repository file unless the sync is a gist. */
+/** The repository backup a pairing hands over, with the token that writes to it. */
+export interface PairBackup extends RepoTarget {
+  token: string;
+}
+
+/**
+ * What a pairing hands over: the token, the repository file unless the sync is a gist, and
+ * the repository the computer backs up to, when it has one.
+ */
 export interface PairAccess {
   token: string;
   target?: PairTarget;
+  backup?: PairBackup;
+}
+
+/** A repository file as it came out of the payload, or null when it is not a well-formed one. */
+function readRepoFile(raw: unknown): RepoTarget | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { owner, repo, branch, path } = raw as Record<string, unknown>;
+  if (typeof owner !== "string" || typeof repo !== "string") return null;
+  if (typeof branch !== "string" || !branch || typeof path !== "string" || !path) return null;
+  const ref = parseRepo(`${owner}/${repo}`);
+  if (ref?.owner !== owner || ref.repo !== repo || cleanPath(path) !== path) return null;
+  return { owner, repo, branch, path };
 }
 
 /** The target as it came out of the payload, or null when it is not a well-formed one. */
 function readTarget(raw: unknown): PairTarget | null {
-  if (!raw || typeof raw !== "object") return null;
-  const { kind, owner, repo, branch, path } = raw as Record<string, unknown>;
-  if (kind !== "repo" || typeof owner !== "string" || typeof repo !== "string") return null;
-  if (typeof branch !== "string" || !branch || typeof path !== "string" || !path) return null;
-  const ref = parseRepo(`${owner}/${repo}`);
-  if (ref?.owner !== owner || ref.repo !== repo || cleanPath(path) !== path) return null;
-  return { kind, owner, repo, branch, path };
+  const file = readRepoFile(raw);
+  return file && (raw as { kind?: unknown }).kind === "repo" ? { kind: "repo", ...file } : null;
+}
+
+/** The backup as it came out of the payload (no token: the sync's), or null when malformed. */
+function readBackup(raw: unknown, syncToken: string): PairBackup | null {
+  const file = readRepoFile(raw);
+  if (!file) return null;
+  const { token } = raw as { token?: unknown };
+  if (token === undefined) return { token: syncToken, ...file };
+  return typeof token === "string" && token ? { token, ...file } : null;
+}
+
+/**
+ * The payload of a spots pairing link, or null when `input` is not one: a link to this app
+ * (`base`, its address without the fragment) whose fragment is `#pair=<payload>`.
+ */
+export function readPairLink(input: string, base: string): string | null {
+  let url: URL;
+  let app: URL;
+  try {
+    url = new URL(input.trim());
+    app = new URL(base);
+  } catch {
+    return null;
+  }
+  const page = (p: string) => p.replace(/index\.html$/, "");
+  if (url.origin !== app.origin || page(url.pathname) !== page(app.pathname)) return null;
+  const payload = url.hash.match(/^#pair=([A-Za-z0-9_-]+)$/)?.[1];
+  return payload ?? null;
 }
 
 /** What the user typed, as a bare code: capitals, no spaces nor dashes. */
@@ -98,6 +144,11 @@ export function newCode(): string {
   return out;
 }
 
+/** The backup as the payload carries it: only its fields, the token left out when it is the sync's. */
+function backupField({ token, owner, repo, branch, path }: PairBackup, syncToken: string) {
+  return { ...(token === syncToken ? {} : { token }), owner, repo, branch, path };
+}
+
 async function keyFor(code: string, salt: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
   const base = await crypto.subtle.importKey(
     "raw",
@@ -120,7 +171,7 @@ async function keyFor(code: string, salt: Uint8Array<ArrayBuffer>): Promise<Cryp
  * goes in its fragment) and the code to show beside it.
  */
 export async function createPairing(
-  { token, target }: PairAccess,
+  { token, target, backup }: PairAccess,
   now: number,
   base: string,
 ): Promise<{ url: string; code: string; payload: string }> {
@@ -129,7 +180,12 @@ export async function createPairing(
   const iv = crypto.getRandomValues(new Uint8Array(IV));
   const head = new Uint8Array([PAIR_VERSION]);
   const plain = new TextEncoder().encode(
-    JSON.stringify({ token, exp: now + PAIR_TTL_MS, ...(target ? { target } : {}) }),
+    JSON.stringify({
+      token,
+      exp: now + PAIR_TTL_MS,
+      ...(target ? { target } : {}),
+      ...(backup ? { backup: backupField(backup, token) } : {}),
+    }),
   );
   const sealed = new Uint8Array(
     await crypto.subtle.encrypt(
@@ -173,10 +229,11 @@ export async function openPairing(payload: string, code: string, now: number): P
   } catch {
     throw new PairError("malformed");
   }
-  const { token, exp, target } = (data ?? {}) as {
+  const { token, exp, target, backup } = (data ?? {}) as {
     token?: unknown;
     exp?: unknown;
     target?: unknown;
+    backup?: unknown;
   };
   if (typeof token !== "string" || !token || typeof exp !== "number") {
     throw new PairError("malformed");
@@ -184,6 +241,9 @@ export async function openPairing(payload: string, code: string, now: number): P
   // No target: a gist sync, as in every payload made before repositories could sync.
   const repo = target === undefined ? null : readTarget(target);
   if (target !== undefined && !repo) throw new PairError("malformed");
+  // No backup: the computer has none, or the payload was made before backups were handed over.
+  const kept = backup === undefined ? null : readBackup(backup, token);
+  if (backup !== undefined && !kept) throw new PairError("malformed");
   if (now > exp) throw new PairError("expired");
-  return repo ? { token, target: repo } : { token };
+  return { token, ...(repo ? { target: repo } : {}), ...(kept ? { backup: kept } : {}) };
 }

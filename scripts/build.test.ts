@@ -28,6 +28,16 @@ describe("build", () => {
     expect(sw).toContain('"spots-tiles-kept"');
   });
 
+  test("the service worker reopens a pairing link left in an older version", () => {
+    const sw = serviceWorker([], "abc");
+    expect(sw).toContain("self.skipWaiting()");
+    expect(sw).toContain("self.clients.claim()");
+    expect(sw).toContain('c.url.includes("#pair=")');
+    expect(sw).toContain("c.navigate(u.href)");
+    // The worker stays valid JavaScript.
+    expect(() => new Function(sw)).not.toThrow();
+  });
+
   test("fonts are served from the site", () => {
     expect(fontsCss()).toContain('url("./fonts/');
     expect(fontsCss()).not.toContain("http");

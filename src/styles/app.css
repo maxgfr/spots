@@ -1400,6 +1400,23 @@ select.input {
   letter-spacing: 0.12em;
 }
 
+.scan {
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--paper-2);
+}
+
+.scan-video {
+  display: block;
+  width: 100%;
+  max-height: 60vh;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 10px;
+  background: #000;
+}
+
 .progress {
   height: 6px;
   border-radius: 3px;

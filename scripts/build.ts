@@ -133,11 +133,22 @@ self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
 });
 self.addEventListener("activate", (e) => {
-  e.waitUntil(
-    caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k.startsWith("spots-") && k !== CACHE && k !== TILES && k !== KEPT).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim()),
-  );
+  const claimed = caches.keys()
+    .then((keys) => Promise.all(keys.filter((k) => k.startsWith("spots-") && k !== CACHE && k !== TILES && k !== KEPT).map((k) => caches.delete(k))))
+    .then(() => self.clients.claim());
+  e.waitUntil(claimed);
+  // A pairing link opened in an older version that does not know it (that version keeps it in
+  // the address bar): open it again in this one. Newer pages reload by themselves. Not waited
+  // for, as the navigation needs this worker activated. The query changes so that it is a real
+  // load: the same URL differing only by its fragment would stay on the old page.
+  claimed
+    .then(() => self.clients.matchAll({ type: "window" }))
+    .then((open) => open.filter((c) => c.url.includes("#pair=")).forEach((c) => {
+      const u = new URL(c.url);
+      u.searchParams.set("v", CACHE);
+      return c.navigate(u.href).catch(() => {});
+    }))
+    .catch(() => {});
 });
 let trimming = null;
 function trim() {

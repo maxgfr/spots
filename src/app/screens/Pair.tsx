@@ -1,7 +1,8 @@
 /**
  * The phone's side of a pairing QR code: the link opened here carries the GitHub token,
  * encrypted; the code shown beside the QR on the computer opens it, and the phone connects
- * to the same sync: the same repository file, or the same gist.
+ * to the same sync: the same repository file, or the same gist. The computer's GitHub backup
+ * repository, when it has one, is remembered here too.
  */
 import { useEffect, useState } from "preact/hooks";
 import { fmt, l, tr } from "../../i18n";
@@ -13,6 +14,7 @@ import {
   PairError,
   type PairErrorCode,
 } from "../../sync/pair";
+import { savePairedBackup } from "../../sync/repoBackup";
 import { connectPaired, link } from "../../sync/sync";
 import { Icon } from "../../ui/icons";
 import { ScreenHead, toast } from "../../ui/ui";
@@ -54,7 +56,24 @@ export function Pair({ payload }: { payload: string }) {
     try {
       access = await openPairing(payload, code, Date.now());
       await connectPaired(access);
-      toast(tr(l("Linked: your places are coming in", "Connecté : tes lieux arrivent")));
+      const { backup, token } = access;
+      // The sync is set up: a backup that cannot be remembered does not undo it.
+      const backedUp =
+        backup &&
+        (await savePairedBackup(
+          backup,
+          backup.token === token ? link.value?.login : undefined,
+        ).catch(() => false));
+      toast(
+        tr(
+          backedUp
+            ? l(
+                "Linked: your places are coming in. The GitHub backup is set up too.",
+                "Connecté : tes lieux arrivent. La sauvegarde GitHub est configurée aussi.",
+              )
+            : l("Linked: your places are coming in", "Connecté : tes lieux arrivent"),
+        ),
+      );
       go({ name: "home" }, { replace: true });
     } catch (err) {
       setError(

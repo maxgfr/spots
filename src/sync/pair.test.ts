@@ -12,8 +12,10 @@ import {
   PAIR_ITERATIONS,
   PAIR_TTL_MS,
   PAIR_VERSION,
+  type PairBackup,
   PairError,
   type PairTarget,
+  readPairLink,
 } from "./pair";
 
 const BASE = "https://maxgfr.github.io/spots/";
@@ -148,6 +150,101 @@ describe("pairing", () => {
     expect(await openPairing(payload, code, NOW)).toEqual({ token: "t", target: good });
   });
 
+  test("the repository backup comes along, with its own token", async () => {
+    const target: PairTarget = {
+      kind: "repo",
+      owner: "maxgfr",
+      repo: "spots-data",
+      branch: "main",
+      path: "spots.json",
+    };
+    const backup: PairBackup = {
+      token: "github_pat_backup",
+      owner: "maxgfr",
+      repo: "notes",
+      branch: "trunk",
+      path: "backups/spots.json",
+    };
+    const { url, code, payload } = await createPairing(
+      { token: "github_pat_sync", target, backup },
+      NOW,
+      BASE,
+    );
+    expect(url).not.toContain("github_pat_backup");
+    expect(url).not.toContain("notes");
+    expect(await openPairing(payload, code, NOW)).toEqual({
+      token: "github_pat_sync",
+      target,
+      backup,
+    });
+    // Beside a gist sync too.
+    const gist = await createPairing({ token: "github_pat_sync", backup }, NOW, BASE);
+    expect(await openPairing(gist.payload, gist.code, NOW)).toEqual({
+      token: "github_pat_sync",
+      backup,
+    });
+  });
+
+  test("a backup with the sync's own token does not carry it twice", async () => {
+    const backup: PairBackup = {
+      token: "github_pat_same",
+      owner: "me",
+      repo: "notes",
+      branch: "main",
+      path: "spots.json",
+    };
+    const one = await createPairing({ token: "github_pat_same", backup }, NOW, BASE);
+    const two = await createPairing(
+      { token: "github_pat_same", backup: { ...backup, token: "github_pat_other" } },
+      NOW,
+      BASE,
+    );
+    expect(one.payload.length).toBeLessThan(two.payload.length);
+    expect(await openPairing(one.payload, one.code, NOW)).toEqual({
+      token: "github_pat_same",
+      backup,
+    });
+  });
+
+  test("a payload made before backups were handed over opens without one", async () => {
+    const code = newCode();
+    const target: PairTarget = {
+      kind: "repo",
+      owner: "me",
+      repo: "notes",
+      branch: "main",
+      path: "spots.json",
+    };
+    const payload = await seal({ token: "t", exp: NOW + PAIR_TTL_MS, target }, code);
+    const access = await openPairing(payload, code, NOW);
+    expect(access).toEqual({ token: "t", target });
+    expect("backup" in access).toBe(false);
+  });
+
+  test("a malformed backup is refused", async () => {
+    const code = newCode();
+    const good = { token: "b", owner: "me", repo: "notes", branch: "main", path: "spots.json" };
+    const bad: unknown[] = [
+      null,
+      "me/notes",
+      42,
+      { ...good, token: "" },
+      { ...good, token: 7 },
+      { ...good, owner: "" },
+      { ...good, owner: "me/other" },
+      { ...good, repo: "../x" },
+      { ...good, branch: "" },
+      { ...good, path: "" },
+      { ...good, path: "/etc/../spots.json" },
+    ];
+    for (const backup of bad) {
+      const payload = await seal({ token: "t", exp: NOW + PAIR_TTL_MS, backup }, code);
+      expect(await failure(openPairing(payload, code, NOW))).toBe("malformed");
+    }
+    const payload = await seal({ token: "t", exp: NOW + PAIR_TTL_MS, backup: good }, code);
+    expect(await openPairing(payload, code, NOW)).toEqual({ token: "t", backup: good });
+  });
+
   test("a base with a fragment already loses it", async () => {
     const { url, payload } = await createPairing({ token: "t" }, NOW, `${BASE}#/sync`);
     expect(url).toBe(`${BASE}#pair=${payload}`);
@@ -191,5 +288,37 @@ describe("pairing", () => {
     expect(await failure(openPairing(payload.slice(0, 30), code, NOW))).toBe("malformed");
     expect(await failure(openPairing("not a payload!", code, NOW))).toBe("malformed");
     expect(await failure(openPairing("", code, NOW))).toBe("malformed");
+  });
+});
+
+describe("pairing links", () => {
+  test("the payload is read from a link to this app", async () => {
+    const { url, payload } = await createPairing({ token: "t" }, NOW, BASE);
+    expect(readPairLink(url, BASE)).toBe(payload);
+    expect(readPairLink(`  ${url}\n`, BASE)).toBe(payload);
+    expect(readPairLink(`${BASE}index.html#pair=${payload}`, BASE)).toBe(payload);
+    expect(readPairLink(`${BASE}?from=qr#pair=${payload}`, BASE)).toBe(payload);
+    expect(
+      readPairLink(`http://localhost:4317/spots/#pair=abc_-9`, "http://localhost:4317/spots/"),
+    ).toBe("abc_-9");
+  });
+
+  test("anything else is not a pairing link", () => {
+    for (const input of [
+      "",
+      "ABCD-2345",
+      "not a link",
+      "https://example.com/spots/#pair=abc",
+      "http://maxgfr.github.io/spots/#pair=abc",
+      "https://maxgfr.github.io/other/#pair=abc",
+      "https://maxgfr.github.io/#pair=abc",
+      `${BASE}#/sync`,
+      `${BASE}#pair=`,
+      `${BASE}#pair=abc def`,
+      `${BASE}#pair=abc&x=1`,
+      `${BASE}#/share/abc`,
+    ]) {
+      expect(readPairLink(input, BASE)).toBeNull();
+    }
   });
 });

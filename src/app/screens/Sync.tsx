@@ -2,7 +2,9 @@
  * Connecting GitHub: the notebook is kept in one file of a private repository
  * of the user's (with a token that can only write that repository's contents),
  * or in a secret gist (with a token that can only touch gists). A phone joins
- * by scanning a QR code shown here instead of pasting the token.
+ * by scanning a QR code shown here instead of pasting the token; the QR code
+ * hands over the GitHub backup repository too, when one is set. A device not
+ * linked yet can scan that QR code from here, or paste its link.
  */
 import { useEffect, useState } from "preact/hooks";
 import { fmt, l, locale, tr } from "../../i18n";
@@ -10,6 +12,7 @@ import { gistUrl, TOKEN_URL } from "../../sync/gist";
 import { GitHubError } from "../../sync/github";
 import { createPairing, formatCode, PAIR_TTL_MS, type PairAccess } from "../../sync/pair";
 import { REPO_TOKEN_URL, repoFileUrl } from "../../sync/repo";
+import { loadRepoTarget } from "../../sync/repoBackup";
 import {
   connect,
   connectRepo,
@@ -24,6 +27,7 @@ import {
 import { Icon } from "../../ui/icons";
 import { copyText, ScreenHead, toast } from "../../ui/ui";
 import { requestSnap } from "../Sheet";
+import { LinkFromDevice } from "./LinkFromDevice";
 
 type Text = ReturnType<typeof l>;
 type Backend = Link["kind"];
@@ -114,6 +118,8 @@ export function syncLabel(): string {
 /** A QR code as inline SVG, dark modules on white, the quiet zone included in `modules`. */
 function Qr({ modules, url }: { modules: boolean[][]; url: string }) {
   const n = modules.length;
+  // At least three pixels a module, so a dense code (a backup handed over too) still scans.
+  const px = Math.max(240, n * 3);
   let d = "";
   modules.forEach((row, y) => {
     for (let x = 0; x < n; x++) {
@@ -128,8 +134,9 @@ function Qr({ modules, url }: { modules: boolean[][]; url: string }) {
     <svg
       class="qr"
       viewBox={`0 0 ${n} ${n}`}
-      width={240}
-      height={240}
+      width={px}
+      height={px}
+      style={{ width: `${px}px` }}
       role="img"
       aria-label={tr(l("QR code to link a phone", "QR code pour connecter un téléphone"))}
       data-url={url}
@@ -145,6 +152,8 @@ interface Shown {
   url: string;
   code: string;
   modules: boolean[][];
+  /** The pairing hands over the GitHub backup repository too. */
+  backup: boolean;
 }
 
 /** The QR code and pairing code a phone needs to join the sync, made afresh each time. */
@@ -162,13 +171,26 @@ function LinkPhone({ access }: { access: PairAccess }) {
   const show = async () => {
     setOpening(true);
     try {
+      // The backup repository, when one is set, goes along with the sync.
+      const saved = await loadRepoTarget();
+      const backup = saved && {
+        token: saved.token,
+        owner: saved.owner,
+        repo: saved.repo,
+        branch: saved.branch,
+        path: saved.path,
+      };
       // The QR encoder loads only when a QR code is shown.
       const [pairing, { encode }] = await Promise.all([
-        createPairing(access, Date.now(), location.origin + location.pathname),
+        createPairing(
+          { ...access, ...(backup ? { backup } : {}) },
+          Date.now(),
+          location.origin + location.pathname,
+        ),
         import("uqr"),
       ]);
       const modules = encode(pairing.url, { ecc: "L", border: 4 }).data;
-      setShown({ url: pairing.url, code: pairing.code, modules });
+      setShown({ url: pairing.url, code: pairing.code, modules, backup: !!backup });
       setExpired(false);
     } catch {
       toast(tr(l("The QR code could not be made", "Le QR code n'a pas pu être créé")));
@@ -215,10 +237,15 @@ function LinkPhone({ access }: { access: PairAccess }) {
           <p class="pair-code">{formatCode(shown.code)}</p>
           <p class="hint" style={{ margin: 0 }}>
             {tr(
-              l(
-                "Together, the QR code and this code give access to your sync: only show them to your own devices. They work for 10 minutes.",
-                "Ensemble, le QR code et ce code donnent accès à ta sync : ne les montre qu'à tes propres appareils. Ils marchent 10 minutes.",
-              ),
+              shown.backup
+                ? l(
+                    "Together, the QR code and this code give access to your sync and to your GitHub backup repository: only show them to your own devices. They work for 10 minutes.",
+                    "Ensemble, le QR code et ce code donnent accès à ta sync et à ton dépôt de sauvegarde GitHub : ne les montre qu'à tes propres appareils. Ils marchent 10 minutes.",
+                  )
+                : l(
+                    "Together, the QR code and this code give access to your sync: only show them to your own devices. They work for 10 minutes.",
+                    "Ensemble, le QR code et ce code donnent accès à ta sync : ne les montre qu'à tes propres appareils. Ils marchent 10 minutes.",
+                  ),
             )}
           </p>
         </>
@@ -437,7 +464,7 @@ export function Sync() {
   };
 
   return (
-    <form class="stack" onSubmit={submit}>
+    <div class="stack">
       <ScreenHead title={tr(l("GitHub sync", "Sync GitHub"))} />
       <p class="muted" style={{ margin: 0 }}>
         {tr(
@@ -447,80 +474,83 @@ export function Sync() {
           ),
         )}
       </p>
-      <div class="field">
-        <span class="label">{tr(l("Keep it in", "Le garder dans"))}</span>
-        <fieldset
-          class="segmented"
-          style={{ gridTemplateColumns: "1fr 1fr" }}
-          aria-label={tr(l("Keep it in", "Le garder dans"))}
-        >
-          <button type="button" aria-pressed={backend === "repo"} onClick={() => choose("repo")}>
-            {tr(l("Private repository", "Dépôt privé"))}
-          </button>
-          <button type="button" aria-pressed={backend === "gist"} onClick={() => choose("gist")}>
-            {tr(l("Secret gist", "Gist secret"))}
-          </button>
-        </fieldset>
-      </div>
-      <p class="small" style={{ margin: 0 }}>
-        {backend === "repo"
-          ? tr(
-              l(
-                "Recommended. A private repository can only be read by you and the people you give access to it. The notebook is one file in it, and every sync is a commit, so its history keeps every version.",
-                "Recommandé. Un dépôt privé ne peut être lu que par toi et les personnes à qui tu y donnes accès. Le carnet y est un seul fichier, et chaque sync est un commit : son historique garde toutes les versions.",
-              ),
-            )
-          : tr(
-              l(
-                "A secret gist is not listed anywhere, but anyone who has its link can read it: GitHub has no truly private gist. Choose a private repository to keep your places to yourself.",
-                "Un gist secret n'est listé nulle part, mais n'importe qui ayant son lien peut le lire : GitHub n'a pas de gist vraiment privé. Choisis un dépôt privé pour garder tes lieux pour toi.",
-              ),
-            )}
-      </p>
-      {backend === "repo" ? <RepoSteps /> : <GistSteps />}
-      {backend === "repo" && (
+      <LinkFromDevice />
+      <form class="stack section" onSubmit={submit}>
+        <div class="field">
+          <span class="label">{tr(l("Keep it in", "Le garder dans"))}</span>
+          <fieldset
+            class="segmented"
+            style={{ gridTemplateColumns: "1fr 1fr" }}
+            aria-label={tr(l("Keep it in", "Le garder dans"))}
+          >
+            <button type="button" aria-pressed={backend === "repo"} onClick={() => choose("repo")}>
+              {tr(l("Private repository", "Dépôt privé"))}
+            </button>
+            <button type="button" aria-pressed={backend === "gist"} onClick={() => choose("gist")}>
+              {tr(l("Secret gist", "Gist secret"))}
+            </button>
+          </fieldset>
+        </div>
+        <p class="small" style={{ margin: 0 }}>
+          {backend === "repo"
+            ? tr(
+                l(
+                  "Recommended. A private repository can only be read by you and the people you give access to it. The notebook is one file in it, and every sync is a commit, so its history keeps every version.",
+                  "Recommandé. Un dépôt privé ne peut être lu que par toi et les personnes à qui tu y donnes accès. Le carnet y est un seul fichier, et chaque sync est un commit : son historique garde toutes les versions.",
+                ),
+              )
+            : tr(
+                l(
+                  "A secret gist is not listed anywhere, but anyone who has its link can read it: GitHub has no truly private gist. Choose a private repository to keep your places to yourself.",
+                  "Un gist secret n'est listé nulle part, mais n'importe qui ayant son lien peut le lire : GitHub n'a pas de gist vraiment privé. Choisis un dépôt privé pour garder tes lieux pour toi.",
+                ),
+              )}
+        </p>
+        {backend === "repo" ? <RepoSteps /> : <GistSteps />}
+        {backend === "repo" && (
+          <label class="field">
+            <span class="label">{tr(l("Repository", "Dépôt"))}</span>
+            <input
+              class="input"
+              autoComplete="off"
+              autoCapitalize="off"
+              spellcheck={false}
+              value={repo}
+              onInput={(e) => setRepo(e.currentTarget.value)}
+              placeholder={tr(l("owner/repo or its link", "propriétaire/dépôt ou son lien"))}
+            />
+          </label>
+        )}
         <label class="field">
-          <span class="label">{tr(l("Repository", "Dépôt"))}</span>
+          <span class="label">{tr(l("Token", "Jeton"))}</span>
           <input
             class="input"
+            type="password"
             autoComplete="off"
-            autoCapitalize="off"
             spellcheck={false}
-            value={repo}
-            onInput={(e) => setRepo(e.currentTarget.value)}
-            placeholder={tr(l("owner/repo or its link", "propriétaire/dépôt ou son lien"))}
+            value={token}
+            onInput={(e) => setToken(e.currentTarget.value)}
+            placeholder="github_pat_…"
           />
         </label>
-      )}
-      <label class="field">
-        <span class="label">{tr(l("Token", "Jeton"))}</span>
-        <input
-          class="input"
-          type="password"
-          autoComplete="off"
-          spellcheck={false}
-          value={token}
-          onInput={(e) => setToken(e.currentTarget.value)}
-          placeholder="github_pat_…"
-        />
-      </label>
-      <p class="hint" style={{ margin: 0 }}>
-        {tr(
-          l(
-            "The token is stored in this browser only and sent to api.github.com only.",
-            "Le jeton est gardé dans ce navigateur seulement et envoyé à api.github.com seulement.",
-          ),
-        )}
-      </p>
-      {error && (
-        <p class="error" role="alert" style={{ margin: 0 }}>
-          {error}
+        <p class="hint" style={{ margin: 0 }}>
+          {tr(
+            l(
+              "The token is stored in this browser only and sent to api.github.com only.",
+              "Le jeton est gardé dans ce navigateur seulement et envoyé à api.github.com seulement.",
+            ),
+          )}
         </p>
-      )}
-      <button type="submit" class="btn primary block" disabled={busy || !ready}>
-        <Icon name={busy ? "spinner" : "github"} size={18} {...(busy ? { class: "spin" } : {})} />
-        {tr(l("Connect", "Connecter"))}
-      </button>
-    </form>
+        {error && (
+          <p class="error" role="alert" style={{ margin: 0 }}>
+            {error}
+          </p>
+        )}
+        <button type="submit" class="btn primary block" disabled={busy || !ready}>
+          <Icon name={busy ? "spinner" : "github"} size={18} {...(busy ? { class: "spin" } : {})} />
+          {tr(l("Connect", "Connecter"))}
+        </button>
+      </form>
+    </div>
   );
 }

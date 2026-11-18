@@ -10,6 +10,7 @@ import { exportBackup, parseBackup } from "../import/backup";
 import { alive } from "../store/model";
 import { doc, mergeIn } from "../store/store";
 import { GitHubError, whoami } from "./github";
+import type { PairBackup } from "./pair";
 import {
   cleanPath,
   parseRepo,
@@ -64,6 +65,17 @@ export async function saveRepoTarget(l: RepoLink): Promise<boolean> {
   repoTarget.value = l;
   repoTargetKept.value = kept !== false;
   return repoTargetKept.value;
+}
+
+/**
+ * Remembers the backup repository a pairing handed over. `login` is the account when it is
+ * already known (the backup uses the sync's token); otherwise GitHub is asked, and the
+ * repository is kept without a name when it cannot answer. False when kept for this page only.
+ */
+export async function savePairedBackup(b: PairBackup, login?: string): Promise<boolean> {
+  const { token, owner, repo, branch, path } = b;
+  const who = login ?? (await whoami(token).catch(() => ""));
+  return saveRepoTarget({ token, login: who, owner, repo, branch, path });
 }
 
 /** Forgets the repository and its token on this device. The file stays on GitHub. */

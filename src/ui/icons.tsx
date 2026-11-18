@@ -166,6 +166,7 @@ const UI_ICONS = {
   star: Star,
   "star-half": StarHalf,
   qr: QrCode,
+  camera: Camera,
 } satisfies Record<string, IconNode>;
 
 export type IconName = keyof typeof UI_ICONS | "github";

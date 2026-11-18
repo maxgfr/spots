@@ -85,7 +85,8 @@ export function href(r: Route): string {
  */
 function routeFromLocation(): Route {
   const r = parseRoute(location.hash);
-  if (r.name === "pair") history.replaceState(null, "", href({ name: "home" }));
+  // The query goes too: the service worker adds one to reopen a pairing link in a new version.
+  if (r.name === "pair") history.replaceState(null, "", location.pathname + href({ name: "home" }));
   return r;
 }
 
@@ -106,7 +107,8 @@ if (typeof window !== "undefined") {
 }
 
 export function go(r: Route, opts: { replace?: boolean } = {}): void {
-  const target = href(r);
+  // A pairing payload stays out of the address bar and the history, as when a link brings it.
+  const target = href(r.name === "pair" ? { name: "home" } : r);
   if (opts.replace) history.replaceState(null, "", target);
   else if (location.hash !== target) {
     history.pushState(null, "", target);
