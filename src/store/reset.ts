@@ -1,7 +1,7 @@
 /**
  * Erasing the whole notebook. Records are not dropped but marked deleted, like any
  * deletion: a sync, or another open tab, would otherwise bring them straight back.
- * The erase reaches the gist and the other devices at their next sync.
+ * The erase reaches GitHub and the other devices at their next sync.
  */
 import type { Doc, Entry } from "./model";
 

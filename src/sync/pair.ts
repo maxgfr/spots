@@ -1,15 +1,17 @@
 /**
  * Linking a phone with a QR code: a notebook does not fit in one, so the code carries the
- * sync access instead. The computer encrypts the GitHub token under a one-time pairing code
- * it shows beside the QR; the phone opens the link, is asked for the code and connects with
- * the token. The payload rides in the URL fragment, so it never reaches a server, and it
- * stops working after ten minutes.
+ * sync access instead. The computer encrypts the GitHub token (and, for a repository, where
+ * the file is) under a one-time pairing code it shows beside the QR; the phone opens the
+ * link, is asked for the code and connects to the same sync. The payload rides in the URL
+ * fragment, so it never reaches a server, and it stops working after ten minutes.
  *
  * Payload: base64url of version (1 byte) | salt (16) | iv (12) | AES-GCM ciphertext of the
- * JSON `{ token, exp }`, under a key derived from the code with PBKDF2-SHA-256. The version
- * byte is authenticated with the ciphertext.
+ * JSON `{ token, exp, target? }`, under a key derived from the code with PBKDF2-SHA-256. The
+ * version byte is authenticated with the ciphertext. `target` is the repository file; without
+ * it (every payload made before repositories could sync) the sync is the account's gist.
  */
 import { fromBase64Url, toBase64Url } from "../share/share";
+import { cleanPath, parseRepo, type RepoTarget } from "./repo";
 
 export const PAIR_VERSION = 1;
 
@@ -42,6 +44,28 @@ export class PairError extends Error {
   constructor(readonly code: PairErrorCode) {
     super(`Pairing failed: ${code}`);
   }
+}
+
+/** The repository file a pairing points to. */
+export interface PairTarget extends RepoTarget {
+  kind: "repo";
+}
+
+/** What a pairing hands over: the token, and the repository file unless the sync is a gist. */
+export interface PairAccess {
+  token: string;
+  target?: PairTarget;
+}
+
+/** The target as it came out of the payload, or null when it is not a well-formed one. */
+function readTarget(raw: unknown): PairTarget | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { kind, owner, repo, branch, path } = raw as Record<string, unknown>;
+  if (kind !== "repo" || typeof owner !== "string" || typeof repo !== "string") return null;
+  if (typeof branch !== "string" || !branch || typeof path !== "string" || !path) return null;
+  const ref = parseRepo(`${owner}/${repo}`);
+  if (ref?.owner !== owner || ref.repo !== repo || cleanPath(path) !== path) return null;
+  return { kind, owner, repo, branch, path };
 }
 
 /** What the user typed, as a bare code: capitals, no spaces nor dashes. */
@@ -92,11 +116,11 @@ async function keyFor(code: string, salt: Uint8Array<ArrayBuffer>): Promise<Cryp
 }
 
 /**
- * A pairing for `token`: the link to put in the QR (`base` is the app's address, the payload
+ * A pairing for `access`: the link to put in the QR (`base` is the app's address, the payload
  * goes in its fragment) and the code to show beside it.
  */
 export async function createPairing(
-  token: string,
+  { token, target }: PairAccess,
   now: number,
   base: string,
 ): Promise<{ url: string; code: string; payload: string }> {
@@ -104,7 +128,9 @@ export async function createPairing(
   const salt = crypto.getRandomValues(new Uint8Array(SALT));
   const iv = crypto.getRandomValues(new Uint8Array(IV));
   const head = new Uint8Array([PAIR_VERSION]);
-  const plain = new TextEncoder().encode(JSON.stringify({ token, exp: now + PAIR_TTL_MS }));
+  const plain = new TextEncoder().encode(
+    JSON.stringify({ token, exp: now + PAIR_TTL_MS, ...(target ? { target } : {}) }),
+  );
   const sealed = new Uint8Array(
     await crypto.subtle.encrypt(
       { name: "AES-GCM", iv, additionalData: head },
@@ -121,8 +147,8 @@ export async function createPairing(
   return { url: `${base.replace(/#.*$/, "")}#pair=${payload}`, code, payload };
 }
 
-/** The token a pairing carries, or a `PairError` saying why it cannot be had. */
-export async function openPairing(payload: string, code: string, now: number): Promise<string> {
+/** The access a pairing carries, or a `PairError` saying why it cannot be had. */
+export async function openPairing(payload: string, code: string, now: number): Promise<PairAccess> {
   const bytes = fromBase64Url(payload.trim());
   if (!bytes || bytes.length < 1 + SALT + IV + TAG + 1 || bytes[0] !== PAIR_VERSION) {
     throw new PairError("malformed");
@@ -147,10 +173,17 @@ export async function openPairing(payload: string, code: string, now: number): P
   } catch {
     throw new PairError("malformed");
   }
-  const { token, exp } = (data ?? {}) as { token?: unknown; exp?: unknown };
+  const { token, exp, target } = (data ?? {}) as {
+    token?: unknown;
+    exp?: unknown;
+    target?: unknown;
+  };
   if (typeof token !== "string" || !token || typeof exp !== "number") {
     throw new PairError("malformed");
   }
+  // No target: a gist sync, as in every payload made before repositories could sync.
+  const repo = target === undefined ? null : readTarget(target);
+  if (target !== undefined && !repo) throw new PairError("malformed");
   if (now > exp) throw new PairError("expired");
-  return token;
+  return repo ? { token, target: repo } : { token };
 }

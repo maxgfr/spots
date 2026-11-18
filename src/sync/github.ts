@@ -17,6 +17,8 @@ export type GitHubErrorCode =
   | "conflict"
   /** The account cannot push to the repository. */
   | "no-push"
+  /** The repository is public: a sync must not publish the notebook. */
+  | "public-repo"
   /** Not a repository name nor a github.com repository link. */
   | "bad-repo"
   /** The file at the chosen path is not a spots backup. */

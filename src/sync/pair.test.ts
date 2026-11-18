@@ -9,12 +9,45 @@ import {
   newCode,
   normalizeCode,
   openPairing,
+  PAIR_ITERATIONS,
   PAIR_TTL_MS,
+  PAIR_VERSION,
   PairError,
+  type PairTarget,
 } from "./pair";
 
 const BASE = "https://maxgfr.github.io/spots/";
 const NOW = 1_800_000_000_000;
+
+/** A payload sealed by hand, byte for byte as the format says, around any JSON. */
+async function seal(plain: unknown, code: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const head = new Uint8Array([PAIR_VERSION]);
+  const base = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(normalizeCode(code)),
+    "PBKDF2",
+    false,
+    ["deriveKey"],
+  );
+  const key = await crypto.subtle.deriveKey(
+    { name: "PBKDF2", hash: "SHA-256", salt, iterations: PAIR_ITERATIONS },
+    base,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt"],
+  );
+  const sealed = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv, additionalData: head },
+      key,
+      new TextEncoder().encode(JSON.stringify(plain)),
+    ),
+  );
+  const bytes = new Uint8Array([...head, ...salt, ...iv, ...sealed]);
+  return toBase64Url(bytes);
+}
 
 async function failure(p: Promise<unknown>): Promise<string> {
   try {
@@ -50,33 +83,85 @@ describe("pairing codes", () => {
 
 describe("pairing", () => {
   test("round trip: the phone gets the token back with the code", async () => {
-    const { url, code, payload } = await createPairing("github_pat_secret", NOW, BASE);
+    const { url, code, payload } = await createPairing({ token: "github_pat_secret" }, NOW, BASE);
     expect(url).toBe(`${BASE}#pair=${payload}`);
     expect(url).not.toContain("github_pat_secret");
-    expect(await openPairing(payload, code, NOW + 1000)).toBe("github_pat_secret");
+    expect(await openPairing(payload, code, NOW + 1000)).toEqual({ token: "github_pat_secret" });
     // Typed in lowercase with the dash, or with spaces.
-    expect(await openPairing(payload, formatCode(code).toLowerCase(), NOW)).toBe(
-      "github_pat_secret",
+    expect(await openPairing(payload, formatCode(code).toLowerCase(), NOW)).toEqual({
+      token: "github_pat_secret",
+    });
+    expect(await openPairing(payload, `${code.slice(0, 4)} ${code.slice(4)}`, NOW)).toEqual({
+      token: "github_pat_secret",
+    });
+  });
+
+  test("round trip with a repository: the phone gets the same file", async () => {
+    const target: PairTarget = {
+      kind: "repo",
+      owner: "maxgfr",
+      repo: "spots-data",
+      branch: "main",
+      path: "data/spots.json",
+    };
+    const { url, code, payload } = await createPairing(
+      { token: "github_pat_secret", target },
+      NOW,
+      BASE,
     );
-    expect(await openPairing(payload, `${code.slice(0, 4)} ${code.slice(4)}`, NOW)).toBe(
-      "github_pat_secret",
-    );
+    expect(url).not.toContain("spots-data");
+    expect(await openPairing(payload, code, NOW)).toEqual({ token: "github_pat_secret", target });
+  });
+
+  test("a payload made before repositories could sync still opens, as a gist", async () => {
+    const code = newCode();
+    const payload = await seal({ token: "github_pat_old", exp: NOW + PAIR_TTL_MS }, code);
+    expect(await openPairing(payload, code, NOW)).toEqual({ token: "github_pat_old" });
+  });
+
+  test("a malformed repository target is refused", async () => {
+    const code = newCode();
+    const good: PairTarget = {
+      kind: "repo",
+      owner: "me",
+      repo: "notes",
+      branch: "main",
+      path: "spots.json",
+    };
+    const bad: unknown[] = [
+      null,
+      "me/notes",
+      { ...good, kind: "gist" },
+      { ...good, owner: "" },
+      { ...good, owner: "me/other" },
+      { ...good, repo: "../x" },
+      { ...good, repo: 42 },
+      { ...good, branch: "" },
+      { ...good, path: "" },
+      { ...good, path: "/etc/../spots.json" },
+    ];
+    for (const target of bad) {
+      const payload = await seal({ token: "t", exp: NOW + PAIR_TTL_MS, target }, code);
+      expect(await failure(openPairing(payload, code, NOW))).toBe("malformed");
+    }
+    const payload = await seal({ token: "t", exp: NOW + PAIR_TTL_MS, target: good }, code);
+    expect(await openPairing(payload, code, NOW)).toEqual({ token: "t", target: good });
   });
 
   test("a base with a fragment already loses it", async () => {
-    const { url, payload } = await createPairing("t", NOW, `${BASE}#/sync`);
+    const { url, payload } = await createPairing({ token: "t" }, NOW, `${BASE}#/sync`);
     expect(url).toBe(`${BASE}#pair=${payload}`);
   });
 
   test("each pairing has its own code and payload", async () => {
-    const a = await createPairing("t", NOW, BASE);
-    const b = await createPairing("t", NOW, BASE);
+    const a = await createPairing({ token: "t" }, NOW, BASE);
+    const b = await createPairing({ token: "t" }, NOW, BASE);
     expect(a.payload).not.toBe(b.payload);
     expect(a.code).not.toBe(b.code);
   });
 
   test("a wrong code is refused", async () => {
-    const { code, payload } = await createPairing("t", NOW, BASE);
+    const { code, payload } = await createPairing({ token: "t" }, NOW, BASE);
     const other = code[0] === "A" ? `B${code.slice(1)}` : `A${code.slice(1)}`;
     expect(await failure(openPairing(payload, other, NOW))).toBe("bad-code");
     expect(await failure(openPairing(payload, "ABC", NOW))).toBe("bad-code");
@@ -84,13 +169,13 @@ describe("pairing", () => {
   });
 
   test("the QR stops working after ten minutes", async () => {
-    const { code, payload } = await createPairing("t", NOW, BASE);
-    expect(await openPairing(payload, code, NOW + PAIR_TTL_MS)).toBe("t");
+    const { code, payload } = await createPairing({ token: "t" }, NOW, BASE);
+    expect(await openPairing(payload, code, NOW + PAIR_TTL_MS)).toEqual({ token: "t" });
     expect(await failure(openPairing(payload, code, NOW + PAIR_TTL_MS + 1))).toBe("expired");
   });
 
   test("an altered payload is refused", async () => {
-    const { code, payload } = await createPairing("t", NOW, BASE);
+    const { code, payload } = await createPairing({ token: "t" }, NOW, BASE);
     const bytes = fromBase64Url(payload) as Uint8Array;
     const flip = (i: number) => {
       const b = bytes.slice();

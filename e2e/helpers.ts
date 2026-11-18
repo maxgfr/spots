@@ -66,9 +66,15 @@ export async function pinBySearch(page: Page, query: string, name: RegExp): Prom
   await page.getByRole("button", { name: "Pin it" }).click();
 }
 
-/** A gist server in memory, shared by every page that uses it, like GitHub's own. */
-export function fakeGitHub() {
+/**
+ * A gist server and repositories (`owner/name`, private or not, branch main) in memory,
+ * shared by every page that uses it, like GitHub's own. The Contents API checks every sha.
+ */
+export function fakeGitHub(repos: Record<string, { private: boolean }> = {}) {
   const gists = new Map<string, { description: string; content: string }>();
+  /** Repository files by `owner/name/path`. */
+  const files = new Map<string, { content: string; sha: string }>();
+  const commits: { file: string; message: string; sha?: string }[] = [];
   let seq = 0;
   const attach = async (target: Page | BrowserContext) => {
     await target.route("https://api.github.com/**", async (route) => {
@@ -77,7 +83,7 @@ export function fakeGitHub() {
         return route.fulfill({ status: 401, json: { message: "Bad credentials" } });
       }
       const url = new URL(req.url());
-      const path = url.pathname;
+      const path = decodeURIComponent(url.pathname);
       const method = req.method();
       const view = (id: string) => {
         const g = gists.get(id);
@@ -86,6 +92,35 @@ export function fakeGitHub() {
         );
       };
       if (path === "/user") return route.fulfill({ json: { login: "tester" } });
+      const inRepo = path.match(/^\/repos\/([^/]+\/[^/]+)(?:\/contents\/(.+))?$/);
+      if (inRepo) {
+        const [, name = "", filePath] = inRepo;
+        const repo = repos[name];
+        if (!repo) return route.fulfill({ status: 404, json: { message: "Not Found" } });
+        if (!filePath) {
+          return route.fulfill({
+            json: { default_branch: "main", private: repo.private, permissions: { push: true } },
+          });
+        }
+        const key = `${name}/${filePath}`;
+        const file = files.get(key);
+        if (method === "PUT") {
+          const body = req.postDataJSON();
+          commits.push({ file: key, message: body.message, sha: body.sha });
+          if (body.branch !== "main") return route.fulfill({ status: 404, json: {} });
+          if (file ? body.sha !== file.sha : body.sha) {
+            return route.fulfill({ status: 409, json: { message: "does not match" } });
+          }
+          const sha = `sha${++seq}`;
+          files.set(key, { content: Buffer.from(body.content, "base64").toString("utf8"), sha });
+          return route.fulfill({ status: file ? 200 : 201, json: { content: { sha } } });
+        }
+        if (!file) return route.fulfill({ status: 404, json: { message: "Not Found" } });
+        const content = Buffer.from(file.content, "utf8").toString("base64");
+        return route.fulfill({
+          json: { type: "file", sha: file.sha, encoding: "base64", content },
+        });
+      }
       if (path === "/gists" && method === "GET") {
         return route.fulfill({ json: [...gists.keys()].map(view) });
       }
@@ -102,12 +137,22 @@ export function fakeGitHub() {
       return route.fulfill({ json: view(id) });
     });
   };
-  return { gists, attach };
+  return { gists, files, commits, attach };
 }
 
-/** Connects the Sync screen with a token. */
+/** Connects the Sync screen to the account's secret gist with a token. */
 export async function connect(page: Page, token: string) {
   await page.goto("./#/sync");
+  await page.getByRole("button", { name: "Secret gist" }).click();
   await page.getByLabel("Token").fill(token);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+}
+
+/** Connects the Sync screen to a repository (the default choice) with a token. */
+export async function connectRepo(page: Page, token: string, repo: string) {
+  await page.goto("./#/sync");
+  await page.getByRole("button", { name: "Private repository" }).click();
+  await page.getByLabel("Repository").fill(repo);
+  await page.getByLabel("Token").fill(token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
 }

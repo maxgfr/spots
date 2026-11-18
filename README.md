@@ -18,9 +18,11 @@ No account, no server, no API key.
   lists come in, lists stay lists, and places without coordinates are found by name.
 - **Works offline.** The app is cached after the first visit, the map keeps the areas you have
   seen, and _Keep this area offline_ stores a whole neighbourhood down to street level.
-- **Sync through your own GitHub.** Optional: paste a fine-grained token that can only touch
-  gists, and your notebook is kept in a secret gist of yours. Every device merges record by
-  record (the newer edit wins, deletions included), and the gist's history keeps every version.
+- **Sync through your own GitHub.** Optional: your notebook is kept in one file of a private
+  repository of yours, with a fine-grained token that can only write that repository's contents
+  (a secret gist works too, but anyone with its link can read it). Every device merges record by
+  record (the newer edit wins, deletions included), and the history on GitHub keeps every
+  version. A phone joins by scanning a QR code.
 - **AI, with your own provider.** Optional, through
   [llm-connect](https://github.com/maxgfr/llm-models/tree/main/packages/llm-connect) and
   [llm-models](https://github.com/maxgfr/llm-models): paste a friend's message or an article (or
@@ -38,7 +40,7 @@ Your notebook lives in this browser, in IndexedDB. The page talks to:
 | `tiles.openfreemap.org`       | Map tiles, fonts and sprites ([OpenFreeMap](https://openfreemap.org), OpenStreetMap data) | Always, as you move the map |
 | `photon.komoot.io`            | Search and reverse lookup ([Photon](https://photon.komoot.io))                            | When you search or pin      |
 | `nominatim.openstreetmap.org` | Reverse lookup when Photon finds nothing                                                  | When you press the map      |
-| `api.github.com`              | Your secret gist                                                                          | Only if you connect GitHub  |
+| `api.github.com`              | Your private repository (or secret gist)                                                  | Only if you connect GitHub  |
 | Your AI provider              | What you ask the AI to read                                                               | Only if you set up the AI   |
 
 A strict Content-Security-Policy keeps every script, style and font to the site itself; there is
@@ -48,12 +50,24 @@ maxgfr.github.io shares the same browser storage.
 
 ## Sync with GitHub
 
-1. Create a [fine-grained token](https://github.com/settings/personal-access-tokens/new).
-2. Under _Account permissions_, set **Gists** to _Read and write_. Nothing else.
-3. In spots, open _Menu → GitHub sync_ and paste it.
+In a private repository (recommended):
+1. [Create a private repository](https://github.com/new?name=spots-data&visibility=private).
+2. Create a [fine-grained token](https://github.com/settings/personal-access-tokens/new); under
+   _Repository access_, pick only that repository, and set **Contents** to _Read and write_.
+   Nothing else.
+3. In spots, open _Menu → GitHub sync_, keep _Private repository_, and paste the repository and
+   the token.
 
-spots looks for a gist holding `spots.json` and creates a secret one if there is none, so a
-second device connected to the same account finds the same notebook.
+The notebook is `spots.json` on the default branch, and every sync that changes it is a commit.
+spots refuses a public repository, and never overwrites a `spots.json` that is not a notebook.
+
+In a secret gist: choose _Secret gist_ instead, with a token whose _Account permissions_ set
+**Gists** to _Read and write_. spots looks for a gist holding `spots.json` and creates a secret
+one if there is none. A secret gist is not listed, but anyone who has its link can read it.
+
+Either way, a second device joins by scanning the QR code under _Link a phone_ (the token travels
+encrypted under a one-time code, in the link's fragment, for ten minutes), or by connecting the
+same repository or account.
 
 ## Import from Google Maps
 
@@ -86,7 +100,7 @@ used.
 | `src/geo/`     | Photon / Nominatim geocoding, maps link parsing                                         |
 | `src/share/`   | Lists as compressed links                                                               |
 | `src/import/`  | Google Takeout, CSV, JSON backups                                                       |
-| `src/sync/`    | GitHub Gist client and sync loop                                                        |
+| `src/sync/`    | GitHub repository and Gist clients, sync loop, QR pairing, backups                      |
 | `src/ai/`      | llm-connect settings, extraction and questions                                          |
 | `src/offline/` | Keeping an area's tiles                                                                 |
 

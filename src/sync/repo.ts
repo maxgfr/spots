@@ -64,15 +64,23 @@ function contentsPath(t: RepoTarget): string {
   return `${repoPath(t)}/contents/${segments(t.path)}`;
 }
 
-/** The repository's default branch, and whether the account may push to it. */
+/** The repository's default branch, whether the account may push to it, and whether it is private. */
 export async function repoInfo(
   token: string,
   owner: string,
   repo: string,
-): Promise<{ defaultBranch: string; canPush: boolean }> {
+): Promise<{ defaultBranch: string; canPush: boolean; isPrivate: boolean }> {
   const res = await call(token, repoPath({ owner, repo }));
-  const j = (await res.json()) as { default_branch?: string; permissions?: { push?: boolean } };
-  return { defaultBranch: j.default_branch || "main", canPush: j.permissions?.push === true };
+  const j = (await res.json()) as {
+    default_branch?: string;
+    private?: boolean;
+    permissions?: { push?: boolean };
+  };
+  return {
+    defaultBranch: j.default_branch || "main",
+    canPush: j.permissions?.push === true,
+    isPrivate: j.private === true,
+  };
 }
 
 export function encodeBase64(text: string): string {

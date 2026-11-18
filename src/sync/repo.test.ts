@@ -112,9 +112,19 @@ test("repoFileUrl links the file on its branch", () => {
   );
 });
 
-test("repoInfo reads the default branch and the push permission", async () => {
+test("repoInfo reads the default branch, the push permission and the visibility", async () => {
   mockFetch(() => json({ default_branch: "trunk", permissions: { push: false } }));
-  expect(await repoInfo("t", "me", "notes")).toEqual({ defaultBranch: "trunk", canPush: false });
+  expect(await repoInfo("t", "me", "notes")).toEqual({
+    defaultBranch: "trunk",
+    canPush: false,
+    isPrivate: false,
+  });
+  mockFetch(() => json({ default_branch: "main", private: true, permissions: { push: true } }));
+  expect(await repoInfo("t", "me", "notes")).toEqual({
+    defaultBranch: "main",
+    canPush: true,
+    isPrivate: true,
+  });
 });
 
 describe("readFile / writeFile", () => {

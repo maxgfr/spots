@@ -67,8 +67,8 @@ function Reset() {
             <p class="small" style={{ margin: 0 }}>
               {tr(
                 l(
-                  "Your notebook is synced: it is erased from your gist and your other devices too. The gist's history keeps the old versions.",
-                  "Ton carnet est synchronisé : il est aussi effacé de ton gist et de tes autres appareils. L'historique du gist garde les anciennes versions.",
+                  "Your notebook is synced: it is erased from GitHub and your other devices too. Its history on GitHub keeps the old versions.",
+                  "Ton carnet est synchronisé : il est aussi effacé de GitHub et de tes autres appareils. Son historique sur GitHub garde les anciennes versions.",
                 ),
               )}
             </p>
